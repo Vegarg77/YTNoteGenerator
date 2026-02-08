@@ -141,13 +141,147 @@ function extractTranscriptText(data) {
   return "";
 }
 
-async function fetchTranscript(videoId) {
-  const resp = await fetch(`https://youtubetranscript.com/?server_vid2=${encodeURIComponent(videoId)}`);
-  if (!resp.ok) throw new Error(`Transcript request failed (${resp.status})`);
-  const data = await resp.json();
-  const text = extractTranscriptText(data).trim();
-  if (!text) throw new Error("Transcript not found for this video.");
+const TRANSCRIPT_PROXIES = [
+  {
+    name: "corsproxy.io",
+    wrap: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
+  },
+  {
+    name: "cors.isomorphic-git.org",
+    wrap: (url) => `https://cors.isomorphic-git.org/${url}`
+  }
+];
+
+async function fetchTextWithProxies(url, signal, label) {
+  const errors = [];
+  for (const proxy of TRANSCRIPT_PROXIES) {
+    try {
+      appendLog(`Fetching ${label} via ${proxy.name}`);
+      const resp = await fetch(proxy.wrap(url), { signal });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.text();
+    } catch (err) {
+      errors.push(`${proxy.name}: ${err.message}`);
+    }
+  }
+  throw new Error(`All proxies failed for ${label}:\n${errors.join("\n")}`);
+}
+
+async function fetchJsonWithProxies(url, signal, label) {
+  const text = await fetchTextWithProxies(url, signal, label);
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new Error(`Invalid JSON response for ${label}: ${err.message}`);
+  }
+}
+
+function parseTranscriptXml(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
+  if (doc.getElementsByTagName("parsererror").length) return "";
+  const nodes = Array.from(doc.getElementsByTagName("text"));
+  return nodes.map((node) => (node.textContent || "").trim()).filter(Boolean).join("\n");
+}
+
+function extractJsonBlock(text, marker) {
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex === -1) return null;
+  const braceStart = text.indexOf("{", markerIndex);
+  if (braceStart === -1) return null;
+  let depth = 0;
+  for (let i = braceStart; i < text.length; i += 1) {
+    if (text[i] === "{") depth += 1;
+    if (text[i] === "}") depth -= 1;
+    if (depth === 0) return text.slice(braceStart, i + 1);
+  }
+  return null;
+}
+
+function extractPlayerResponse(html) {
+  const jsonText = extractJsonBlock(html, "ytInitialPlayerResponse");
+  if (!jsonText) return null;
+  try {
+    return JSON.parse(jsonText);
+  } catch (err) {
+    appendLog(`Failed to parse player response JSON: ${err.message}`);
+    return null;
+  }
+}
+
+function pickCaptionTrack(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+  return (
+    tracks.find((track) => track.languageCode?.startsWith("en")) ||
+    tracks.find((track) => track.languageCode) ||
+    tracks[0]
+  );
+}
+
+function extractTranscriptFromJson3(data) {
+  if (!data?.events) return "";
+  return data.events
+    .map((event) => (event.segs ? event.segs.map((seg) => seg.utf8 || "").join("") : ""))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function fetchTranscriptFromTrack(track, signal) {
+  const baseUrl = track?.baseUrl;
+  if (!baseUrl) throw new Error("Caption track missing baseUrl");
+  const jsonUrl = baseUrl.includes("fmt=") ? baseUrl : `${baseUrl}&fmt=json3`;
+  const data = await fetchJsonWithProxies(jsonUrl, signal, "caption track (json3)");
+  let text = extractTranscriptFromJson3(data).trim();
+  if (text) return text;
+  const xmlText = await fetchTextWithProxies(baseUrl, signal, "caption track (xml)");
+  text = parseTranscriptXml(xmlText).trim();
+  if (!text) throw new Error("Caption track empty");
   return text;
+}
+
+async function fetchTranscriptFromPlayer(videoId, signal) {
+  const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+  const html = await fetchTextWithProxies(watchUrl, signal, "YouTube watch page");
+  const playerResponse = extractPlayerResponse(html);
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+  if (!tracks.length) throw new Error("No caption tracks found on watch page");
+  const track = pickCaptionTrack(tracks);
+  appendLog(`Using caption track: ${track.languageCode || "unknown"} (${track.name?.simpleText || "auto"})`);
+  return fetchTranscriptFromTrack(track, signal);
+}
+
+async function fetchTranscriptFromTimedText(videoId, signal) {
+  const url = `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`;
+  const xml = await fetchTextWithProxies(url, signal, "timedtext (xml)");
+  const text = parseTranscriptXml(xml).trim();
+  if (!text) throw new Error("Timedtext transcript empty");
+  return text;
+}
+
+async function fetchTranscript(videoId) {
+  const sources = [
+    {
+      name: "YouTube watch page captions",
+      get: (signal) => fetchTranscriptFromPlayer(videoId, signal)
+    },
+    {
+      name: "YouTube timedtext",
+      get: (signal) => fetchTranscriptFromTimedText(videoId, signal)
+    }
+  ];
+
+  const errors = [];
+  for (const source of sources) {
+    try {
+      appendLog(`Trying transcript source: ${source.name}`);
+      const text = await withTimeout((signal) => source.get(signal), 20000, source.name);
+      if (text) return text;
+      throw new Error("Transcript empty");
+    } catch (err) {
+      errors.push(`${source.name}: ${err.message}`);
+    }
+  }
+  throw new Error(`Transcript not found. Sources tried:\n${errors.join("\n")}`);
 }
 
 async function openaiChat({ apiKey, body, signal }) {

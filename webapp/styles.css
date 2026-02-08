@@ -19,9 +19,9 @@ body {
 }
 
 .page {
-  max-width: 1200px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 32px 24px 60px;
+  padding: clamp(24px, 4vw, 40px) clamp(20px, 3.5vw, 40px) clamp(48px, 6vw, 72px);
 }
 
 .topbar {
@@ -60,8 +60,8 @@ p { margin: 0 0 8px; }
 
 .layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: clamp(16px, 2.5vw, 32px);
 }
 
 .panel {
