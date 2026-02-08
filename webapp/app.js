@@ -149,6 +149,10 @@ const TRANSCRIPT_PROXIES = [
   {
     name: "cors.isomorphic-git.org",
     wrap: (url) => `https://cors.isomorphic-git.org/${url}`
+  },
+  {
+    name: "allorigins.win",
+    wrap: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
   }
 ];
 
