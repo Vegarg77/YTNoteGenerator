@@ -11,6 +11,21 @@ Features
 - Works on `www.youtube.com`, `m.youtube.com`, and `youtu.be`
 - Resilient architecture with Offscreen Document and Service Worker fallback
 
+Web App (Windows 11 or any desktop browser)
+This repo includes a standalone web app that runs locally in your browser. It fetches a YouTube transcript, calls OpenAI to clean + summarize, and outputs a Markdown note you can copy into Obsidian.
+
+Quick start
+1. From this repo, start a simple local web server (recommended for Windows):
+   - PowerShell: `python -m http.server 5173`
+   - Or: `npx serve webapp`
+2. Open `http://localhost:5173/webapp/` in your browser.
+3. Paste the YouTube URL, your OpenAI API key, and click “Generate Obsidian Note.”
+
+Notes
+- The API key is never stored; it is used only in memory for the current run.
+- Transcript fetching uses a public transcript endpoint. Some videos (or regions) may not provide transcripts.
+- If transcript fetching fails, open the transcript panel on YouTube first and retry.
+
 Permissions
 The extension requests:
 - activeTab, scripting: Inject/communicate with the content script to scrape the YouTube page
@@ -95,5 +110,3 @@ Changelog (highlights)
   - Summary input cap; storage size guard
   - Popup URL gating for m.youtube.com and youtu.be
   - Popup progress smoothing; results page link to original video
-
-
