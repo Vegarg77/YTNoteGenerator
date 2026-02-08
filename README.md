@@ -15,10 +15,9 @@ Web App (Windows 11 or any desktop browser)
 This repo includes a standalone web app that runs locally in your browser. It fetches a YouTube transcript, calls OpenAI to clean + summarize, and outputs a Markdown note you can copy into Obsidian.
 
 Quick start
-1. From this repo, start a simple local web server (recommended for Windows):
-   - PowerShell: `python -m http.server 5173`
-   - Or: `npx serve webapp`
-2. Open `http://localhost:5173/webapp/` in your browser.
+1. From this repo, start the local web app + transcript API server:
+   - `node server.js`
+2. Open `http://localhost:5173/` in your browser.
 3. Paste the YouTube URL, your OpenAI API key, and click “Generate Obsidian Note.”
 
 Notes
