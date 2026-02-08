@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YT → Obsidian Web App</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div>
+            <h1>YT → Obsidian</h1>
+            <p>Transcript cleanup, summaries, and note export in one place.</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="badge">Web App</span>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel">
+          <h2>Start a new note</h2>
+          <p class="muted">Paste a YouTube URL, add your OpenAI API key, and generate a ready-to-copy Obsidian note.</p>
+
+          <label for="videoUrl">YouTube URL</label>
+          <input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+
+          <label for="apiKey">OpenAI API key (not saved)</label>
+          <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+
+          <label for="model">Model</label>
+          <input id="model" type="text" value="gpt-4o-mini" />
+
+          <button id="run" class="btn primary">Generate Obsidian Note</button>
+          <div id="inputErr" class="err"></div>
+
+          <div class="callout">
+            <strong>Privacy note</strong>
+            <p>Your API key stays in memory for this run and is never stored on disk.</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Progress</h2>
+            <span id="statusSmall" class="badge soft">Idle</span>
+          </div>
+          <div class="stepper">
+            <div id="s1" class="step"></div>
+            <div id="s2" class="step"></div>
+            <div id="s3" class="step"></div>
+          </div>
+          <div class="progress-row">
+            <span class="muted">Status</span>
+            <span id="pct" class="muted">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div id="pfill" class="progress-fill"></div>
+          </div>
+          <div id="log" class="log" aria-live="polite"></div>
+
+          <div class="panel-footer">
+            <p class="muted">If transcripts are missing, open the transcript panel on YouTube and try again.</p>
+          </div>
+        </section>
+
+        <section class="panel full">
+          <div class="panel-header">
+            <h2>Obsidian note</h2>
+            <div class="actions">
+              <button id="copy" class="btn ghost" disabled>Copy Markdown</button>
+              <a id="openVideo" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open video</a>
+            </div>
+          </div>
+          <textarea id="result" rows="16" placeholder="Your note will appear here..."></textarea>
+          <div id="copyStatus" class="muted"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
