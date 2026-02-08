@@ -143,10 +143,6 @@ function extractTranscriptText(data) {
 
 const TRANSCRIPT_PROXIES = [
   {
-    name: "direct",
-    wrap: (url) => url
-  },
-  {
     name: "corsproxy.io",
     wrap: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`
   },
@@ -189,17 +185,6 @@ function parseTranscriptXml(xmlText) {
   if (doc.getElementsByTagName("parsererror").length) return "";
   const nodes = Array.from(doc.getElementsByTagName("text"));
   return nodes.map((node) => (node.textContent || "").trim()).filter(Boolean).join("\n");
-}
-
-function parseTrackListXml(xmlText) {
-  const doc = new DOMParser().parseFromString(xmlText, "text/xml");
-  if (doc.getElementsByTagName("parsererror").length) return [];
-  const tracks = Array.from(doc.getElementsByTagName("track"));
-  return tracks.map((track) => ({
-    langCode: track.getAttribute("lang_code") || "",
-    name: track.getAttribute("name") || "",
-    kind: track.getAttribute("kind") || ""
-  }));
 }
 
 function extractJsonBlock(text, marker) {
@@ -270,17 +255,8 @@ async function fetchTranscriptFromPlayer(videoId, signal) {
 }
 
 async function fetchTranscriptFromTimedText(videoId, signal) {
-  const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${encodeURIComponent(videoId)}`;
-  const listXml = await fetchTextWithProxies(listUrl, signal, "timedtext (track list)");
-  const tracks = parseTrackListXml(listXml);
-  if (!tracks.length) throw new Error("No timedtext tracks found");
-  const preferredTrack =
-    tracks.find((track) => track.langCode.startsWith("en") && track.kind !== "asr") ||
-    tracks.find((track) => track.langCode.startsWith("en")) ||
-    tracks.find((track) => track.kind !== "asr") ||
-    tracks[0];
-  const trackUrl = `https://www.youtube.com/api/timedtext?lang=${encodeURIComponent(preferredTrack.langCode)}&v=${encodeURIComponent(videoId)}`;
-  const xml = await fetchTextWithProxies(trackUrl, signal, "timedtext (xml)");
+  const url = `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`;
+  const xml = await fetchTextWithProxies(url, signal, "timedtext (xml)");
   const text = parseTranscriptXml(xml).trim();
   if (!text) throw new Error("Timedtext transcript empty");
   return text;
