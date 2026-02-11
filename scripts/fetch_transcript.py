@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import sys
+from collections.abc import Iterable
 
 
 def _load_api_class():
@@ -30,8 +31,24 @@ def _load_api_class():
 def _normalize_items(raw):
     if raw is None:
         return []
+
+    if hasattr(raw, "to_raw_data") and callable(raw.to_raw_data):
+        try:
+            raw = raw.to_raw_data()
+        except Exception:
+            pass
+
+    if hasattr(raw, "snippets"):
+        raw = getattr(raw, "snippets")
+
     if isinstance(raw, dict):
         raw = raw.get("transcript") or raw.get("segments") or []
+
+    if not isinstance(raw, list) and isinstance(raw, Iterable) and not isinstance(raw, (str, bytes)):
+        try:
+            raw = list(raw)
+        except Exception:
+            raw = []
 
     if not isinstance(raw, list):
         return []
@@ -41,7 +58,14 @@ def _normalize_items(raw):
         if isinstance(item, dict):
             text = item.get("text") or item.get("utf8") or ""
         else:
-            text = str(item)
+            if hasattr(item, "text"):
+                text = getattr(item, "text")
+            elif hasattr(item, "utf8"):
+                text = getattr(item, "utf8")
+            elif hasattr(item, "content"):
+                text = getattr(item, "content")
+            else:
+                text = str(item)
 
         text = " ".join(text.split()).strip()
         if text:
@@ -53,11 +77,27 @@ def _normalize_items(raw):
 def _fetch_transcript(api_class, video_id):
     errors = []
 
+    fetch_attempts = [
+        {"kwargs": {"languages": ["en", "en-US", "en-GB"]}, "label": "fetch(languages=en*)"},
+        {"kwargs": {}, "label": "fetch(default-language)"}
+    ]
+
     if hasattr(api_class, "get_transcript"):
         try:
             return api_class.get_transcript(video_id, languages=["en"]), "yt-transcript-api:get_transcript"
         except Exception as exc:
             errors.append(f"get_transcript failed: {exc}")
+
+    if hasattr(api_class, "fetch"):
+        for attempt in fetch_attempts:
+            try:
+                return api_class.fetch(video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
+            except TypeError as exc:
+                errors.append(f"class-{attempt['label']} signature mismatch: {exc}")
+                if attempt["kwargs"]:
+                    continue
+            except Exception as exc:
+                errors.append(f"class-{attempt['label']} failed: {exc}")
 
     try:
         api_instance = api_class()
@@ -65,25 +105,28 @@ def _fetch_transcript(api_class, video_id):
         api_instance = None
 
     if api_instance and hasattr(api_instance, "fetch"):
-        try:
-            return api_instance.fetch(video_id, languages=["en"]), "yt-transcript-api:fetch"
-        except TypeError:
+        for attempt in fetch_attempts:
             try:
-                return api_instance.fetch(video_id), "yt-transcript-api:fetch"
+                return api_instance.fetch(video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
+            except TypeError as exc:
+                errors.append(f"{attempt['label']} signature mismatch: {exc}")
+                if attempt["kwargs"]:
+                    continue
             except Exception as exc:
-                errors.append(f"fetch(video_id) failed: {exc}")
-        except Exception as exc:
-            errors.append(f"fetch failed: {exc}")
+                errors.append(f"{attempt['label']} failed: {exc}")
 
     if api_instance and hasattr(api_instance, "list"):
         try:
             transcript_list = api_instance.list(video_id)
             if hasattr(transcript_list, "find_transcript"):
-                transcript = transcript_list.find_transcript(["en"]).fetch()
+                try:
+                    transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"]).fetch()
+                except Exception:
+                    transcript = next(iter(transcript_list)).fetch() if isinstance(transcript_list, Iterable) else []
             elif hasattr(transcript_list, "find_generated_transcript"):
-                transcript = transcript_list.find_generated_transcript(["en"]).fetch()
+                transcript = transcript_list.find_generated_transcript(["en", "en-US", "en-GB"]).fetch()
             else:
-                transcript = []
+                transcript = next(iter(transcript_list)).fetch() if isinstance(transcript_list, Iterable) else []
             return transcript, "yt-transcript-api:list"
         except Exception as exc:
             errors.append(f"list/find_transcript failed: {exc}")
