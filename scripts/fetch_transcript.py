@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+import json
+import sys
+
+
+def _load_api_class():
+    errors = []
+
+    try:
+        from yt_transcript_api import YouTubeTranscriptApi  # type: ignore
+
+        return YouTubeTranscriptApi
+    except Exception as exc:  # pragma: no cover - depends on runtime env
+        errors.append(f"yt_transcript_api import failed: {exc}")
+
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+
+        return YouTubeTranscriptApi
+    except Exception as exc:  # pragma: no cover - depends on runtime env
+        errors.append(f"youtube_transcript_api import failed: {exc}")
+
+    raise RuntimeError(
+        "Unable to import transcript API package. Install the dependency from "
+        "https://github.com/FFD2025/yt-transcript-api. Details: "
+        + " | ".join(errors)
+    )
+
+
+def _normalize_items(raw):
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        raw = raw.get("transcript") or raw.get("segments") or []
+
+    if not isinstance(raw, list):
+        return []
+
+    normalized = []
+    for item in raw:
+        if isinstance(item, dict):
+            text = item.get("text") or item.get("utf8") or ""
+        else:
+            text = str(item)
+
+        text = " ".join(text.split()).strip()
+        if text:
+            normalized.append(text)
+
+    return normalized
+
+
+def _fetch_transcript(api_class, video_id):
+    errors = []
+
+    if hasattr(api_class, "get_transcript"):
+        try:
+            return api_class.get_transcript(video_id, languages=["en"]), "yt-transcript-api:get_transcript"
+        except Exception as exc:
+            errors.append(f"get_transcript failed: {exc}")
+
+    try:
+        api_instance = api_class()
+    except Exception:
+        api_instance = None
+
+    if api_instance and hasattr(api_instance, "fetch"):
+        try:
+            return api_instance.fetch(video_id, languages=["en"]), "yt-transcript-api:fetch"
+        except TypeError:
+            try:
+                return api_instance.fetch(video_id), "yt-transcript-api:fetch"
+            except Exception as exc:
+                errors.append(f"fetch(video_id) failed: {exc}")
+        except Exception as exc:
+            errors.append(f"fetch failed: {exc}")
+
+    if api_instance and hasattr(api_instance, "list"):
+        try:
+            transcript_list = api_instance.list(video_id)
+            if hasattr(transcript_list, "find_transcript"):
+                transcript = transcript_list.find_transcript(["en"]).fetch()
+            elif hasattr(transcript_list, "find_generated_transcript"):
+                transcript = transcript_list.find_generated_transcript(["en"]).fetch()
+            else:
+                transcript = []
+            return transcript, "yt-transcript-api:list"
+        except Exception as exc:
+            errors.append(f"list/find_transcript failed: {exc}")
+
+    raise RuntimeError("; ".join(errors) if errors else "No compatible transcript API method found")
+
+
+def main():
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        raise RuntimeError("Missing video ID argument")
+
+    video_id = sys.argv[1].strip()
+    api_class = _load_api_class()
+    raw, source = _fetch_transcript(api_class, video_id)
+
+    lines = _normalize_items(raw)
+    transcript = "\n".join(lines).strip()
+    if not transcript:
+        raise RuntimeError("Transcript is empty")
+
+    print(json.dumps({"videoId": video_id, "source": source, "transcript": transcript}, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as err:
+        print(str(err), file=sys.stderr)
+        sys.exit(1)

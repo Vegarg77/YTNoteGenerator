@@ -22,7 +22,7 @@ Quick start
 
 Notes
 - The API key is never stored; it is used only in memory for the current run.
-- Transcript fetching is handled by the local server using URL-only lookup (watch page caption tracks, Innertube player fallback, then timedtext fallback).
+- Transcript fetching is handled by a local Python bridge script that calls the `yt-transcript-api` package (https://github.com/FFD2025/yt-transcript-api).
 - Some videos (or regions) may still not expose captions.
 
 Permissions
@@ -36,6 +36,8 @@ The extension requests:
 
 Requirements
 - A valid OpenAI API key with access to the chosen chat-completions model (default: gpt-4o-mini)
+- Python 3 available on PATH as `python3`
+- `yt-transcript-api` installed in that Python environment
 
 Install (Developer/Unpacked)
 1. Clone or download this repository.
