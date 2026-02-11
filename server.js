@@ -295,16 +295,12 @@ async function fetchTranscriptBundle(videoId, signal) {
 function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   let relativePath = url.pathname;
-
-  if (relativePath === "/" || relativePath === "/webapp") {
-    relativePath = "/webapp/index.html";
-  } else if (!relativePath.startsWith("/webapp/")) {
-    // Support root-relative assets referenced by /webapp/index.html (e.g. /app.js, /styles.css).
-    relativePath = `/webapp${relativePath}`;
-  }
+  if (relativePath === "/") relativePath = "/webapp/index.html";
+  if (relativePath === "/webapp") relativePath = "/webapp/index.html";
 
   const filePath = path.join(__dirname, relativePath);
-  if (!filePath.startsWith(WEBAPP_DIR)) {
+  const allowed = filePath.startsWith(WEBAPP_DIR) || filePath === path.join(__dirname, "webapp", "index.html");
+  if (!allowed) {
     sendText(res, 404, "Not found");
     return;
   }
