@@ -7,6 +7,7 @@ const { spawn } = require("child_process");
 const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 const TRANSCRIPT_SCRIPT = path.join(__dirname, "scripts", "fetch_transcript.py");
+const PYTHON_CMD = process.env.PYTHON_CMD || "python";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -49,7 +50,7 @@ function parseVideoId(inputUrl) {
 
 function runTranscriptScript(videoId, signal) {
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [TRANSCRIPT_SCRIPT, videoId], {
+    const child = spawn(PYTHON_CMD, [TRANSCRIPT_SCRIPT, videoId], {
       cwd: __dirname,
       stdio: ["ignore", "pipe", "pipe"]
     });
