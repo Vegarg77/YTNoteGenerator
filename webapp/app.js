@@ -97,22 +97,6 @@ function resetUi() {
   copyStatus.textContent = "";
 }
 
-async function fetchVideoMeta(videoUrl) {
-  try {
-    const resp = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`);
-    if (!resp.ok) throw new Error("oEmbed failed");
-    const data = await resp.json();
-    return {
-      title: data?.title || "",
-      channel: data?.author_name || "",
-      url: videoUrl
-    };
-  } catch (err) {
-    appendLog(`Metadata lookup failed: ${err.message}`);
-    return { title: "", channel: "", url: videoUrl };
-  }
-}
-
 async function fetchTranscriptFromServer(videoUrl) {
   const url = `/api/transcript?url=${encodeURIComponent(videoUrl)}`;
   const resp = await fetch(url);
@@ -121,7 +105,15 @@ async function fetchTranscriptFromServer(videoUrl) {
     throw new Error(`Transcript API error: ${resp.status} ${text}`);
   }
   const data = await resp.json();
-  return data?.transcript || "";
+  return {
+    transcript: data?.transcript || "",
+    source: data?.source || "unknown",
+    metadata: {
+      title: data?.metadata?.title || "",
+      channel: data?.metadata?.channel || "",
+      url: data?.metadata?.url || videoUrl
+    }
+  };
 }
 
 async function openaiChat({ apiKey, body, signal }) {
@@ -173,9 +165,12 @@ async function run() {
 
   try {
     setProgress("Fetching metadata + transcript", 12);
-    const metaPromise = fetchVideoMeta(videoUrl);
-    const transcriptPromise = fetchTranscriptFromServer(videoUrl);
-    const [meta, transcript] = await Promise.all([metaPromise, transcriptPromise]);
+    const transcriptResult = await fetchTranscriptFromServer(videoUrl);
+    const transcript = transcriptResult.transcript;
+    const meta = transcriptResult.metadata;
+
+    appendLog(`Transcript source: ${transcriptResult.source}`);
+    appendLog(`Transcript lines: ${transcript.split("\n").length}`);
 
     setProgress("Cleaning transcript…", 38, "Preparing");
     let fixedTranscript = "";
@@ -282,7 +277,7 @@ async function run() {
       channel: meta.channel,
       summary,
       fixedTranscript,
-      videoUrl: meta.url
+      videoUrl: meta.url || videoUrl
     });
 
     setProgress("Done", 100, "Note ready");
