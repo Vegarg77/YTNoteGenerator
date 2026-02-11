@@ -145,6 +145,66 @@ function parseTranscriptXml(xmlText) {
     .join("\n");
 }
 
+function parseXmlAttributes(rawAttrs = "") {
+  const attrs = {};
+  for (const match of rawAttrs.matchAll(/(\w+)="([^"]*)"/g)) {
+    attrs[match[1]] = decodeHtmlEntities(match[2]);
+  }
+  return attrs;
+}
+
+function parseTimedTextTrackList(listXml) {
+  if (!listXml || !listXml.includes("<track")) return [];
+  const tracks = [];
+  for (const match of listXml.matchAll(/<track\s+([^>]*?)\/?>(?:<\/track>)?/g)) {
+    const attrs = parseXmlAttributes(match[1] || "");
+    tracks.push({
+      langCode: attrs.lang_code || "",
+      name: attrs.name || "",
+      kind: attrs.kind || "",
+      vssId: attrs.vss_id || ""
+    });
+  }
+  return tracks;
+}
+
+function rankTimedTextTracks(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
+
+  const rankTrack = (track) => {
+    let score = 0;
+    if (track?.langCode?.startsWith("en")) score += 60;
+    if (!track?.kind || track.kind !== "asr") score += 30;
+    if (track?.vssId?.startsWith(".")) score += 20;
+    return score;
+  };
+
+  return [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
+}
+
+function buildTimedTextUrl(videoId, track) {
+  const endpoint = new URL("https://www.youtube.com/api/timedtext");
+  endpoint.searchParams.set("v", videoId);
+
+  if (track?.langCode) endpoint.searchParams.set("lang", track.langCode);
+  if (track?.name) endpoint.searchParams.set("name", track.name);
+  if (track?.kind) endpoint.searchParams.set("kind", track.kind);
+
+  return endpoint.toString();
+}
+
+async function fetchTranscriptFromTimedTextTrack(videoId, track, signal) {
+  const endpoint = buildTimedTextUrl(videoId, track);
+  const xml = await fetchText(endpoint, signal);
+  const timedText = parseTranscriptXml(xml).trim();
+  if (!timedText) throw new Error("Timedtext track empty");
+
+  return {
+    text: timedText,
+    source: `timedtext:${track?.langCode || "unknown"}${track?.kind ? `:${track.kind}` : ""}`
+  };
+}
+
 function extractTranscriptFromJson3(data) {
   if (!data?.events) return "";
   return data.events
