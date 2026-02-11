@@ -6,6 +6,27 @@
   const copiedEl = document.getElementById('copied');
 
   const data = (await chrome.storage.local.get(['lastResult']))?.lastResult;
+
+  async function copyTextareaValue(textareaEl) {
+    const text = textareaEl?.value || "";
+    if (!text) return false;
+
+    textareaEl.focus();
+    textareaEl.select();
+    textareaEl.setSelectionRange(0, text.length);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      try {
+        return document.execCommand('copy');
+      } catch {
+        return false;
+      }
+    }
+  }
+
   if (!data) {
     titleEl.textContent = "No recent result found";
     mdEl.value = "Run the extension on a YouTube video to generate a note.";
@@ -24,11 +45,11 @@
   mdEl.value = data.markdown || "";
 
   document.getElementById('copy').addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(mdEl.value);
+    const copied = await copyTextareaValue(mdEl);
+    if (copied) {
       copiedEl.style.display = 'block';
       setTimeout(() => (copiedEl.style.display = 'none'), 2000);
-    } catch (e) {
+    } else {
       alert("Failed to copy automatically. You can select all (Ctrl/Cmd+A) and copy manually.");
     }
   });

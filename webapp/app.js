@@ -143,6 +143,26 @@ function startHeartbeat(label = "Working…") {
 }
 function stopHeartbeat(timer) { if (timer) clearInterval(timer); }
 
+async function copyTextareaValue(textareaEl) {
+  const text = textareaEl?.value || "";
+  if (!text) return false;
+
+  textareaEl.focus();
+  textareaEl.select();
+  textareaEl.setSelectionRange(0, text.length);
+
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    }
+  }
+}
+
 async function run() {
   inputErr.textContent = "";
   resetUi();
@@ -291,11 +311,11 @@ async function run() {
 
 copyBtn.addEventListener("click", async () => {
   if (!resultEl.value) return;
-  try {
-    await navigator.clipboard.writeText(resultEl.value);
+  const copied = await copyTextareaValue(resultEl);
+  if (copied) {
     copyStatus.textContent = "Copied to clipboard.";
-  } catch (err) {
-    copyStatus.textContent = `Copy failed: ${err.message}`;
+  } else {
+    copyStatus.textContent = "Copy failed. Please use Ctrl/Cmd+A then Ctrl/Cmd+C.";
   }
 });
 
