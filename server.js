@@ -112,8 +112,8 @@ function extractPlayerResponse(html) {
   return parseJsonBlock(html, "ytInitialPlayerResponse = ", "{");
 }
 
-function pickCaptionTrack(tracks) {
-  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+function rankCaptionTracks(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
 
   const rankTrack = (track) => {
     let score = 0;
@@ -123,8 +123,7 @@ function pickCaptionTrack(tracks) {
     return score;
   };
 
-  const sorted = [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
-  return sorted[0];
+  return [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
 }
 
 function decodeHtmlEntities(text) {
@@ -210,6 +209,22 @@ async function fetchTranscriptFromTrack(track, signal) {
   throw new Error("Caption track empty");
 }
 
+async function fetchTranscriptFromTracks(tracks, signal) {
+  const rankedTracks = rankCaptionTracks(tracks);
+  if (!rankedTracks.length) throw new Error("Caption tracks missing");
+
+  let lastError = null;
+  for (const track of rankedTracks) {
+    try {
+      return await fetchTranscriptFromTrack(track, signal);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Caption track empty");
+}
+
 async function fetchViaTimedText(videoId, signal) {
   const candidates = [
     `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`,
@@ -254,8 +269,7 @@ async function fetchViaInnertube(videoId, html, signal) {
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
   if (!tracks.length) return null;
 
-  const track = pickCaptionTrack(tracks);
-  const transcript = await fetchTranscriptFromTrack(track, signal);
+  const transcript = await fetchTranscriptFromTracks(tracks, signal);
   return {
     ...transcript,
     metadata: extractMetaFromPlayerResponse(playerResponse, `https://www.youtube.com/watch?v=${videoId}`)
@@ -270,12 +284,15 @@ async function fetchTranscriptBundle(videoId, signal) {
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
 
   if (tracks.length) {
-    const track = pickCaptionTrack(tracks);
-    const transcript = await fetchTranscriptFromTrack(track, signal);
-    return {
-      ...transcript,
-      metadata: extractMetaFromPlayerResponse(playerResponse, watchUrl)
-    };
+    try {
+      const transcript = await fetchTranscriptFromTracks(tracks, signal);
+      return {
+        ...transcript,
+        metadata: extractMetaFromPlayerResponse(playerResponse, watchUrl)
+      };
+    } catch {
+      // Fall through to alternative transcript sources.
+    }
   }
 
   try {
