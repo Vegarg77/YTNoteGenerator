@@ -36,7 +36,7 @@ The extension requests:
 
 Requirements
 - A valid OpenAI API key with access to the chosen chat-completions model (default: gpt-4o-mini)
-- Python 3 available on PATH as `python3`
+- Python available on PATH as `python` (or set `PYTHON_CMD` before launching `server.js`)
 - `yt-transcript-api` installed in that Python environment
 
 Install (Developer/Unpacked)
