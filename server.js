@@ -112,8 +112,8 @@ function extractPlayerResponse(html) {
   return parseJsonBlock(html, "ytInitialPlayerResponse = ", "{");
 }
 
-function pickCaptionTrack(tracks) {
-  if (!Array.isArray(tracks) || tracks.length === 0) return null;
+function rankCaptionTracks(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
 
   const rankTrack = (track) => {
     let score = 0;
@@ -123,8 +123,62 @@ function pickCaptionTrack(tracks) {
     return score;
   };
 
-  const sorted = [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
-  return sorted[0];
+  return [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
+}
+
+
+function parseTimedTextTrackList(xmlText) {
+  const tracks = [];
+  const trackMatches = [...xmlText.matchAll(/<track\b([^>]*)\/?>(?:<\/track>)?/g)];
+  for (const match of trackMatches) {
+    const attrText = match[1] || "";
+    const attrs = {};
+    for (const attr of attrText.matchAll(/([a-zA-Z_:-]+)="([^"]*)"/g)) {
+      attrs[attr[1]] = decodeHtmlEntities(attr[2]);
+    }
+    if (attrs.lang_code) {
+      tracks.push({
+        langCode: attrs.lang_code,
+        kind: attrs.kind || "",
+        name: attrs.name || "",
+        langOriginal: attrs.lang_original || "",
+        langTranslated: attrs.lang_translated || ""
+      });
+    }
+  }
+  return tracks;
+}
+
+function rankTimedTextTracks(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return [];
+  const score = (track) => {
+    let value = 0;
+    if ((track.langCode || "").startsWith("en")) value += 50;
+    if (!track.kind || track.kind !== "asr") value += 30;
+    if (track.name === "") value += 10;
+    return value;
+  };
+  return [...tracks].sort((a, b) => score(b) - score(a));
+}
+
+async function fetchTranscriptFromTimedTextTrack(videoId, track, signal) {
+  const params = new URLSearchParams({
+    v: videoId,
+    lang: track.langCode
+  });
+
+  if (track.kind) params.set("kind", track.kind);
+  if (track.name) params.set("name", track.name);
+
+  const endpoint = `https://www.youtube.com/api/timedtext?${params.toString()}`;
+  const xml = await fetchText(endpoint, signal);
+  const text = parseTranscriptXml(xml).trim();
+  if (!text) throw new Error("Timedtext track empty");
+
+  return {
+    text,
+    source: `timedtext:${track.langCode}${track.kind ? `:${track.kind}` : ""}`
+  };
 }
 
 function decodeHtmlEntities(text) {
@@ -210,7 +264,43 @@ async function fetchTranscriptFromTrack(track, signal) {
   throw new Error("Caption track empty");
 }
 
+async function fetchTranscriptFromTracks(tracks, signal) {
+  const rankedTracks = rankCaptionTracks(tracks);
+  if (!rankedTracks.length) throw new Error("Caption tracks missing");
+
+  let lastError = null;
+  for (const track of rankedTracks) {
+    try {
+      return await fetchTranscriptFromTrack(track, signal);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error("Caption track empty");
+}
+
 async function fetchViaTimedText(videoId, signal) {
+  try {
+    const listEndpoint = `https://www.youtube.com/api/timedtext?type=list&v=${encodeURIComponent(videoId)}`;
+    const listXml = await fetchText(listEndpoint, signal);
+    const tracks = rankTimedTextTracks(parseTimedTextTrackList(listXml));
+
+    if (tracks.length) {
+      let lastError = null;
+      for (const track of tracks) {
+        try {
+          return await fetchTranscriptFromTimedTextTrack(videoId, track, signal);
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (lastError) throw lastError;
+    }
+  } catch {
+    // Fall through to legacy timedtext fallback URLs.
+  }
+
   const candidates = [
     `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`,
     `https://www.youtube.com/api/timedtext?lang=en&kind=asr&v=${encodeURIComponent(videoId)}`,
@@ -228,6 +318,7 @@ async function fetchViaTimedText(videoId, signal) {
   }
   throw new Error("Timedtext transcript empty");
 }
+
 
 async function fetchViaInnertube(videoId, html, signal) {
   const cfg = extractYtCfg(html);
@@ -254,8 +345,7 @@ async function fetchViaInnertube(videoId, html, signal) {
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
   if (!tracks.length) return null;
 
-  const track = pickCaptionTrack(tracks);
-  const transcript = await fetchTranscriptFromTrack(track, signal);
+  const transcript = await fetchTranscriptFromTracks(tracks, signal);
   return {
     ...transcript,
     metadata: extractMetaFromPlayerResponse(playerResponse, `https://www.youtube.com/watch?v=${videoId}`)
@@ -270,12 +360,15 @@ async function fetchTranscriptBundle(videoId, signal) {
   const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
 
   if (tracks.length) {
-    const track = pickCaptionTrack(tracks);
-    const transcript = await fetchTranscriptFromTrack(track, signal);
-    return {
-      ...transcript,
-      metadata: extractMetaFromPlayerResponse(playerResponse, watchUrl)
-    };
+    try {
+      const transcript = await fetchTranscriptFromTracks(tracks, signal);
+      return {
+        ...transcript,
+        metadata: extractMetaFromPlayerResponse(playerResponse, watchUrl)
+      };
+    } catch {
+      // Fall through to alternative transcript sources.
+    }
   }
 
   try {
