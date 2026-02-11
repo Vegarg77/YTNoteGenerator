@@ -226,6 +226,26 @@ async function fetchTranscriptFromTracks(tracks, signal) {
 }
 
 async function fetchViaTimedText(videoId, signal) {
+  try {
+    const listEndpoint = `https://www.youtube.com/api/timedtext?type=list&v=${encodeURIComponent(videoId)}`;
+    const listXml = await fetchText(listEndpoint, signal);
+    const tracks = rankTimedTextTracks(parseTimedTextTrackList(listXml));
+
+    if (tracks.length) {
+      let lastError = null;
+      for (const track of tracks) {
+        try {
+          return await fetchTranscriptFromTimedTextTrack(videoId, track, signal);
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (lastError) throw lastError;
+    }
+  } catch {
+    // Fall through to legacy timedtext fallback URLs.
+  }
+
   const candidates = [
     `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`,
     `https://www.youtube.com/api/timedtext?lang=en&kind=asr&v=${encodeURIComponent(videoId)}`,
@@ -243,6 +263,7 @@ async function fetchViaTimedText(videoId, signal) {
   }
   throw new Error("Timedtext transcript empty");
 }
+
 
 async function fetchViaInnertube(videoId, html, signal) {
   const cfg = extractYtCfg(html);
