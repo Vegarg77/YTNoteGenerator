@@ -22,8 +22,8 @@ Quick start
 
 Notes
 - The API key is never stored; it is used only in memory for the current run.
-- Transcript fetching uses a public transcript endpoint. Some videos (or regions) may not provide transcripts.
-- If transcript fetching fails, open the transcript panel on YouTube first and retry.
+- Transcript fetching is handled by the local server using URL-only lookup (watch page caption tracks, Innertube player fallback, then timedtext fallback).
+- Some videos (or regions) may still not expose captions.
 
 Permissions
 The extension requests:
@@ -73,7 +73,7 @@ Data Handling & Privacy
 - The payload size is guarded and may be truncated if too large for storage limits.
 
 Troubleshooting
-- Transcript not found: YouTube may hide or localize the transcript UI. Try opening the transcript manually. Some videos do not provide transcripts.
+- Transcript not found: Some videos do not publish caption tracks (or region/account restrictions may block them). Try a different video or provide one with subtitles enabled.
 - Clipboard copy fails: The extension opens the results page for manual copy.
 - No progress / fallback used: The offscreen document may be slow to initialize; the extension falls back to running entirely in the Service Worker.
 - Rate limits / timeouts: The extension retries once with a short backoff for each OpenAI call. Extremely long transcripts are chunked for cleaning and the summary prompt input is capped.
