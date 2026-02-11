@@ -126,61 +126,6 @@ function rankCaptionTracks(tracks) {
   return [...tracks].sort((a, b) => rankTrack(b) - rankTrack(a));
 }
 
-
-function parseTimedTextTrackList(xmlText) {
-  const tracks = [];
-  const trackMatches = [...xmlText.matchAll(/<track\b([^>]*)\/?>(?:<\/track>)?/g)];
-  for (const match of trackMatches) {
-    const attrText = match[1] || "";
-    const attrs = {};
-    for (const attr of attrText.matchAll(/([a-zA-Z_:-]+)="([^"]*)"/g)) {
-      attrs[attr[1]] = decodeHtmlEntities(attr[2]);
-    }
-    if (attrs.lang_code) {
-      tracks.push({
-        langCode: attrs.lang_code,
-        kind: attrs.kind || "",
-        name: attrs.name || "",
-        langOriginal: attrs.lang_original || "",
-        langTranslated: attrs.lang_translated || ""
-      });
-    }
-  }
-  return tracks;
-}
-
-function rankTimedTextTracks(tracks) {
-  if (!Array.isArray(tracks) || tracks.length === 0) return [];
-  const score = (track) => {
-    let value = 0;
-    if ((track.langCode || "").startsWith("en")) value += 50;
-    if (!track.kind || track.kind !== "asr") value += 30;
-    if (track.name === "") value += 10;
-    return value;
-  };
-  return [...tracks].sort((a, b) => score(b) - score(a));
-}
-
-async function fetchTranscriptFromTimedTextTrack(videoId, track, signal) {
-  const params = new URLSearchParams({
-    v: videoId,
-    lang: track.langCode
-  });
-
-  if (track.kind) params.set("kind", track.kind);
-  if (track.name) params.set("name", track.name);
-
-  const endpoint = `https://www.youtube.com/api/timedtext?${params.toString()}`;
-  const xml = await fetchText(endpoint, signal);
-  const text = parseTranscriptXml(xml).trim();
-  if (!text) throw new Error("Timedtext track empty");
-
-  return {
-    text,
-    source: `timedtext:${track.langCode}${track.kind ? `:${track.kind}` : ""}`
-  };
-}
-
 function decodeHtmlEntities(text) {
   return text
     .replace(/&amp;/g, "&")
