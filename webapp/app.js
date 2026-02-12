@@ -116,7 +116,7 @@ async function fetchTranscriptFromServer(videoUrl) {
   };
 }
 
-async function openaiChat({ apiKey, body, signal }) {
+async function openaiChatCompletions({ apiKey, body, signal }) {
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -128,10 +128,68 @@ async function openaiChat({ apiKey, body, signal }) {
   });
   if (!resp.ok) {
     const t = await resp.text();
-    throw new Error(`OpenAI error: ${resp.status} ${t}`);
+    throw new Error(`OpenAI chat error: ${resp.status} ${t}`);
   }
   const data = await resp.json();
   return data?.choices?.[0]?.message?.content || "";
+}
+
+function normalizeResponseOutputText(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text;
+  if (!Array.isArray(data?.output)) return "";
+
+  const chunks = [];
+  for (const item of data.output) {
+    if (!Array.isArray(item?.content)) continue;
+    for (const part of item.content) {
+      const text = part?.text || part?.output_text || "";
+      if (text) chunks.push(text);
+    }
+  }
+  return chunks.join("\n").trim();
+}
+
+async function openaiResponses({ apiKey, body, signal }) {
+  const resp = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`OpenAI responses error: ${resp.status} ${t}`);
+  }
+  const data = await resp.json();
+  return normalizeResponseOutputText(data);
+}
+
+async function openaiText({ apiKey, model, messages, signal }) {
+  const isGpt5Family = /^gpt-5/i.test(model || "");
+
+  if (isGpt5Family) {
+    return openaiResponses({
+      apiKey,
+      signal,
+      body: {
+        model,
+        input: messages
+      }
+    });
+  }
+
+  return openaiChatCompletions({
+    apiKey,
+    signal,
+    body: {
+      model,
+      temperature: 0.1,
+      messages
+    }
+  });
 }
 
 function startHeartbeat(label = "Working…") {
@@ -211,10 +269,10 @@ async function run() {
       let hb = startHeartbeat("Cleaning transcript…");
       try {
         try {
-          fixedTranscript = await withTimeout((signal) => openaiChat({ apiKey, body, signal }), 120000, "OpenAI (clean)");
+          fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, "OpenAI (clean)");
         } catch {
           setProgress("Retrying clean…", 45);
-          fixedTranscript = await withTimeout((signal) => openaiChat({ apiKey, body, signal }), 120000, "OpenAI (clean retry)");
+          fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, "OpenAI (clean retry)");
         }
       } finally {
         stopHeartbeat(hb);
@@ -242,11 +300,11 @@ async function run() {
         try {
           let cleaned;
           try {
-            cleaned = await withTimeout((signal) => openaiChat({ apiKey, body, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
+            cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
           } catch {
             setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
             cleaned = await withTimeout(
-              (signal) => openaiChat({ apiKey, body, signal }),
+              (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
               120000,
               `OpenAI (clean chunk ${i + 1} retry)`
             );
@@ -279,10 +337,10 @@ async function run() {
       let hb = startHeartbeat("Summarizing…");
       try {
         try {
-          summary = await withTimeout((signal) => openaiChat({ apiKey, body: sumBody, signal }), 120000, "OpenAI (summary)");
+          summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: sumBody.messages, signal }), 120000, "OpenAI (summary)");
         } catch {
           setProgress("Retrying summary…", 74);
-          summary = await withTimeout((signal) => openaiChat({ apiKey, body: sumBody, signal }), 120000, "OpenAI (summary retry)");
+          summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: sumBody.messages, signal }), 120000, "OpenAI (summary retry)");
         }
       } finally {
         stopHeartbeat(hb);

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import inspect
 import sys
 from collections.abc import Iterable
 
@@ -77,6 +78,25 @@ def _normalize_items(raw):
 def _fetch_transcript(api_class, video_id):
     errors = []
 
+    def add_error(message):
+        if message and message not in errors:
+            errors.append(message)
+
+    def call_maybe_bound(target, video_id_arg, **kwargs):
+        """Call transcript API methods whether they are class/static or instance methods."""
+        sig = None
+        try:
+            sig = inspect.signature(target)
+        except Exception:
+            sig = None
+
+        if sig:
+            params = list(sig.parameters.values())
+            if params and params[0].name in {"self", "cls"}:
+                raise TypeError("unbound instance/class method")
+
+        return target(video_id_arg, **kwargs)
+
     fetch_attempts = [
         {"kwargs": {"languages": ["en", "en-US", "en-GB"]}, "label": "fetch(languages=en*)"},
         {"kwargs": {}, "label": "fetch(default-language)"}
@@ -84,20 +104,20 @@ def _fetch_transcript(api_class, video_id):
 
     if hasattr(api_class, "get_transcript"):
         try:
-            return api_class.get_transcript(video_id, languages=["en"]), "yt-transcript-api:get_transcript"
+            return call_maybe_bound(api_class.get_transcript, video_id, languages=["en"]), "yt-transcript-api:get_transcript"
         except Exception as exc:
-            errors.append(f"get_transcript failed: {exc}")
+            add_error(f"get_transcript failed: {exc}")
 
     if hasattr(api_class, "fetch"):
         for attempt in fetch_attempts:
             try:
-                return api_class.fetch(video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
+                return call_maybe_bound(api_class.fetch, video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
             except TypeError as exc:
-                errors.append(f"class-{attempt['label']} signature mismatch: {exc}")
+                add_error(f"class-{attempt['label']} signature mismatch: {exc}")
                 if attempt["kwargs"]:
                     continue
             except Exception as exc:
-                errors.append(f"class-{attempt['label']} failed: {exc}")
+                add_error(f"class-{attempt['label']} failed: {exc}")
 
     try:
         api_instance = api_class()
@@ -109,15 +129,21 @@ def _fetch_transcript(api_class, video_id):
             try:
                 return api_instance.fetch(video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
             except TypeError as exc:
-                errors.append(f"{attempt['label']} signature mismatch: {exc}")
+                add_error(f"{attempt['label']} signature mismatch: {exc}")
                 if attempt["kwargs"]:
                     continue
             except Exception as exc:
-                errors.append(f"{attempt['label']} failed: {exc}")
+                add_error(f"{attempt['label']} failed: {exc}")
 
+    transcript_list_method = None
     if api_instance and hasattr(api_instance, "list"):
+        transcript_list_method = api_instance.list
+    elif api_instance and hasattr(api_instance, "list_transcripts"):
+        transcript_list_method = api_instance.list_transcripts
+
+    if transcript_list_method:
         try:
-            transcript_list = api_instance.list(video_id)
+            transcript_list = transcript_list_method(video_id)
             if hasattr(transcript_list, "find_transcript"):
                 try:
                     transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"]).fetch()
@@ -129,9 +155,9 @@ def _fetch_transcript(api_class, video_id):
                 transcript = next(iter(transcript_list)).fetch() if isinstance(transcript_list, Iterable) else []
             return transcript, "yt-transcript-api:list"
         except Exception as exc:
-            errors.append(f"list/find_transcript failed: {exc}")
+            add_error(f"list/find_transcript failed: {exc}")
 
-    raise RuntimeError("; ".join(errors) if errors else "No compatible transcript API method found")
+    raise RuntimeError("; ".join(errors[:4]) if errors else "No compatible transcript API method found")
 
 
 def main():
