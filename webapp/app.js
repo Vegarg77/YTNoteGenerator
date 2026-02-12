@@ -186,7 +186,6 @@ async function openaiText({ apiKey, model, messages, signal }) {
     signal,
     body: {
       model,
-      temperature: 0.1,
       messages
     }
   });
