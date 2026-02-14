@@ -334,22 +334,19 @@ async function runInServiceWorker(tabId, apiKey, modelFromSW) {
       const out = [];
       for (let i=0;i<chunks.length;i++) {
         report(`Cleaning chunk ${i+1}/${chunks.length}`, 38 + Math.round((i/chunks.length)*25));
-        startHB(`Cleaning chunk ${i+1}/${chunks.length}`);
         let cleaned;
         try {
-          try {
-            cleaned = await withTimeout(
-              (signal)=>cleanChunk({ apiKey, model: chosenModel, chunk: chunks[i], idx: i, total: chunks.length, signal }),
-              120000, `OpenAI (clean chunk ${i+1})`
-            );
-          } catch (_) {
-            await new Promise(r=>setTimeout(r, 800));
-            cleaned = await withTimeout(
-              (signal)=>cleanChunk({ apiKey, model: chosenModel, chunk: chunks[i], idx: i, total: chunks.length, signal }),
-              120000, `OpenAI (clean chunk ${i+1} retry)`
-            );
-          }
-        } finally { stopHB(); }
+          cleaned = await withTimeout(
+            (signal)=>cleanChunk({ apiKey, model: chosenModel, chunk: chunks[i], idx: i, total: chunks.length, signal }),
+            120000, `OpenAI (clean chunk ${i+1})`
+          );
+        } catch (_) {
+          await new Promise(r=>setTimeout(r, 800));
+          cleaned = await withTimeout(
+            (signal)=>cleanChunk({ apiKey, model: chosenModel, chunk: chunks[i], idx: i, total: chunks.length, signal }),
+            120000, `OpenAI (clean chunk ${i+1} retry)`
+          );
+        }
         out.push(cleaned);
       }
       fixedTranscript = out.join("\n\n");

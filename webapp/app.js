@@ -281,7 +281,9 @@ async function run() {
       const chunks = splitIntoChunks(transcript, 12000);
       const out = [];
       for (let i = 0; i < chunks.length; i += 1) {
-        setProgress(`Cleaning chunk ${i + 1}/${chunks.length}`, 38 + Math.round((i / chunks.length) * 25));
+        const chunkLabel = `Cleaning chunk ${i + 1}/${chunks.length}`;
+        setProgress(chunkLabel, 38 + Math.round((i / chunks.length) * 25));
+        appendLog(chunkLabel);
         const body = {
           model,
           temperature: 0.1,
@@ -295,23 +297,18 @@ async function run() {
             }
           ]
         };
-        let hb = startHeartbeat(`Cleaning chunk ${i + 1}/${chunks.length}`);
+        let cleaned;
         try {
-          let cleaned;
-          try {
-            cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
-          } catch {
-            setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
-            cleaned = await withTimeout(
-              (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
-              120000,
-              `OpenAI (clean chunk ${i + 1} retry)`
-            );
-          }
-          out.push((cleaned || "").trim());
-        } finally {
-          stopHeartbeat(hb);
+          cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
+        } catch {
+          setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
+          cleaned = await withTimeout(
+            (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
+            120000,
+            `OpenAI (clean chunk ${i + 1} retry)`
+          );
         }
+        out.push((cleaned || "").trim());
       }
       fixedTranscript = out.join("\n\n");
     }
