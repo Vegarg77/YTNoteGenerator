@@ -72,7 +72,6 @@ function createProgressPanel(videoUrl, index) {
       <h3>Video ${index + 1}</h3>
       <span class="badge soft">Queued</span>
     </div>
-    <p class="muted video-url" title="${videoUrl}">${videoUrl}</p>
     <div class="stepper">
       <div class="step"></div>
       <div class="step"></div>
@@ -87,6 +86,13 @@ function createProgressPanel(videoUrl, index) {
     </div>
     <div class="log" aria-live="polite"></div>
   `;
+
+  const videoUrlEl = document.createElement("p");
+  videoUrlEl.className = "muted video-url";
+  videoUrlEl.title = videoUrl;
+  videoUrlEl.textContent = videoUrl;
+  const stepperEl = card.querySelector(".stepper");
+  card.insertBefore(videoUrlEl, stepperEl);
 
   progressContainer.appendChild(card);
 
