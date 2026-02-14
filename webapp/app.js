@@ -372,16 +372,22 @@ async function run() {
     });
 
     setProgress("Saving note file…", 92);
-    const saveResult = await saveNoteToServer({
-      markdown,
-      videoTitle: meta.title
-    });
-    appendLog(`Saved note: ${saveResult.fileName}`);
+    let saveResult = null;
+    try {
+      saveResult = await saveNoteToServer({
+        markdown,
+        videoTitle: meta.title
+      });
+      appendLog(`Saved note: ${saveResult.fileName}`);
+    } catch (saveErr) {
+      const reason = saveErr?.message || "Unknown save error";
+      appendLog(`Note save failed: ${reason}`);
+    }
 
     setProgress("Done", 100, "Note ready");
     resultEl.value = markdown;
     copyBtn.disabled = false;
-    copyStatus.textContent = `Saved to ${saveResult.filePath}`;
+    copyStatus.textContent = saveResult ? `Saved to ${saveResult.filePath}` : "Save failed (note still available in the UI).";
   } catch (err) {
     inputErr.textContent = err.message || "Something went wrong.";
     setProgress("Error", 100, err.message || "Failed");
