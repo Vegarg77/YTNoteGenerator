@@ -295,23 +295,18 @@ async function run() {
             }
           ]
         };
-        let hb = startHeartbeat(`Cleaning chunk ${i + 1}/${chunks.length}`);
+        let cleaned;
         try {
-          let cleaned;
-          try {
-            cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
-          } catch {
-            setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
-            cleaned = await withTimeout(
-              (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
-              120000,
-              `OpenAI (clean chunk ${i + 1} retry)`
-            );
-          }
-          out.push((cleaned || "").trim());
-        } finally {
-          stopHeartbeat(hb);
+          cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
+        } catch {
+          setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
+          cleaned = await withTimeout(
+            (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
+            120000,
+            `OpenAI (clean chunk ${i + 1} retry)`
+          );
         }
+        out.push((cleaned || "").trim());
       }
       fixedTranscript = out.join("\n\n");
     }
