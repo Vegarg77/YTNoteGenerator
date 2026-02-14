@@ -8,6 +8,7 @@ const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 const TRANSCRIPT_SCRIPT = path.join(__dirname, "scripts", "fetch_transcript.py");
 const PYTHON_CMD = process.env.PYTHON_CMD || "python";
+const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -31,6 +32,40 @@ function sendText(res, status, text) {
     "Access-Control-Allow-Origin": "*"
   });
   res.end(text);
+}
+
+function sanitizeObsidianFileName(rawTitle) {
+  const fallback = "Untitled Video Note";
+  const title = (rawTitle || "").trim();
+  const base = (title || fallback)
+    .replace(/[\x00-\x1f\x80-\x9f]/g, "")
+    .replace(/[\\/:*?"<>|#[\]^]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.\s]+$/g, "");
+
+  return (base || fallback) + ".md";
+}
+
+async function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+      if (body.length > 5 * 1024 * 1024) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(body || "{}"));
+      } catch {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", (err) => reject(err));
+  });
 }
 
 function parseVideoId(inputUrl) {
@@ -200,6 +235,39 @@ const server = http.createServer(async (req, res) => {
       sendText(res, 502, `Transcript fetch failed: ${err.message}`);
     } finally {
       clearTimeout(timer);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/save-note") {
+    if (req.method !== "POST") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+
+    try {
+      const payload = await readJsonBody(req);
+      const markdown = typeof payload?.markdown === "string" ? payload.markdown : "";
+      const videoTitle = typeof payload?.videoTitle === "string" ? payload.videoTitle : "";
+
+      if (!markdown.trim()) {
+        sendText(res, 400, "Missing markdown content");
+        return;
+      }
+
+      const fileName = sanitizeObsidianFileName(videoTitle);
+      const filePath = path.join(OBSIDIAN_NOTE_DIR, fileName);
+
+      await fs.promises.mkdir(OBSIDIAN_NOTE_DIR, { recursive: true });
+      await fs.promises.writeFile(filePath, markdown, "utf8");
+
+      sendJson(res, 200, {
+        saved: true,
+        fileName,
+        filePath
+      });
+    } catch (err) {
+      sendText(res, 500, `Failed to save note: ${err.message}`);
     }
     return;
   }
