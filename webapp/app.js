@@ -281,7 +281,9 @@ async function run() {
       const chunks = splitIntoChunks(transcript, 12000);
       const out = [];
       for (let i = 0; i < chunks.length; i += 1) {
-        setProgress(`Cleaning chunk ${i + 1}/${chunks.length}`, 38 + Math.round((i / chunks.length) * 25));
+        const chunkLabel = `Cleaning chunk ${i + 1}/${chunks.length}`;
+        setProgress(chunkLabel, 38 + Math.round((i / chunks.length) * 25));
+        appendLog(chunkLabel);
         const body = {
           model,
           temperature: 0.1,
