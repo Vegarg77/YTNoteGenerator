@@ -56,6 +56,11 @@ h2 {
   font-size: 18px;
 }
 
+h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
 p { margin: 0 0 8px; }
 
 .layout {
@@ -146,6 +151,14 @@ textarea::placeholder { color: #64748b; }
 
 .actions { display: flex; gap: 10px; align-items: center; }
 
+.batch-status-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .badge {
   padding: 4px 10px;
   border-radius: 999px;
@@ -158,6 +171,12 @@ textarea::placeholder { color: #64748b; }
   background: rgba(56, 189, 248, 0.12);
   color: var(--text);
   border-color: rgba(56, 189, 248, 0.3);
+}
+
+.badge.danger {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(127, 29, 29, 0.35);
 }
 
 .muted { color: var(--muted); font-size: 13px; }
@@ -199,6 +218,17 @@ textarea::placeholder { color: #64748b; }
 
 @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .progress-row {
   display: flex;
   justify-content: space-between;
@@ -223,8 +253,8 @@ textarea::placeholder { color: #64748b; }
 
 .log {
   margin-top: 12px;
-  min-height: clamp(230px, 34vh, 360px);
-  max-height: 42vh;
+  min-height: 140px;
+  max-height: 220px;
   overflow: auto;
   padding: 10px;
   border-radius: 12px;
@@ -235,18 +265,32 @@ textarea::placeholder { color: #64748b; }
   line-height: 1.4;
 }
 
-.progress-panel {
+.progress-container {
+  display: contents;
+}
+
+.video-progress-card {
   display: flex;
   flex-direction: column;
+  min-height: 430px;
+  animation: panel-enter 280ms ease;
 }
 
-.progress-panel .log {
+.video-progress-card .panel-header {
+  margin-bottom: 8px;
+}
+
+
+.video-progress-card .log {
   flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin-bottom: 6px;
 }
 
-.progress-panel .panel-footer {
-  margin-top: auto;
-  padding-top: 12px;
+.video-url {
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {
@@ -283,8 +327,12 @@ textarea::placeholder { color: #64748b; }
   .actions .btn { width: 100%; }
 
   .log {
-    min-height: 210px;
-    max-height: 38vh;
+    min-height: 130px;
+    max-height: 200px;
+  }
+
+  .video-progress-card {
+    min-height: 360px;
   }
 }
 

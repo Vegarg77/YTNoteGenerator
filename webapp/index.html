@@ -24,10 +24,10 @@
       <main class="layout">
         <section class="panel">
           <h2>Start a new note</h2>
-          <p class="muted">Paste a YouTube URL, add your OpenAI API key, and generate a ready-to-copy Obsidian note.</p>
+          <p class="muted">Paste one or more YouTube URLs (new lines or spaces), add your OpenAI API key, and generate ready-to-copy Obsidian notes.</p>
 
-          <label for="videoUrl">YouTube URL</label>
-          <input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+          <label for="videoUrl">YouTube URL(s)</label>
+          <textarea id="videoUrl" rows="4" placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\n..."></textarea>
 
           <label for="apiKey">OpenAI API key (not saved)</label>
           <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
@@ -37,6 +37,10 @@
 
           <button id="run" class="btn primary">Generate Obsidian Note</button>
           <div id="inputErr" class="err"></div>
+          <div class="batch-status-row">
+            <span class="muted">Batch status</span>
+            <span id="statusSmall" class="badge soft">Idle</span>
+          </div>
 
           <div class="callout">
             <strong>Privacy note</strong>
@@ -44,39 +48,17 @@
           </div>
         </section>
 
-        <section class="panel progress-panel">
-          <div class="panel-header">
-            <h2>Progress</h2>
-            <span id="statusSmall" class="badge soft">Idle</span>
-          </div>
-          <div class="stepper">
-            <div id="s1" class="step"></div>
-            <div id="s2" class="step"></div>
-            <div id="s3" class="step"></div>
-          </div>
-          <div class="progress-row">
-            <span class="muted">Status</span>
-            <span id="pct" class="muted">0%</span>
-          </div>
-          <div class="progress-bar">
-            <div id="pfill" class="progress-fill"></div>
-          </div>
-          <div id="log" class="log" aria-live="polite"></div>
-
-          <div class="panel-footer">
-            <p class="muted">Transcripts are fetched directly from YouTube caption tracks using only the video URL.</p>
-          </div>
-        </section>
+        <div id="progressContainer" class="progress-container"></div>
 
         <section class="panel full">
           <div class="panel-header">
-            <h2>Obsidian note</h2>
+            <h2>Obsidian notes</h2>
             <div class="actions">
               <button id="copy" class="btn ghost" disabled>Copy Markdown</button>
-              <a id="openVideo" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open video</a>
+              <a id="openVideo" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open first video</a>
             </div>
           </div>
-          <textarea id="result" rows="16" placeholder="Your note will appear here..."></textarea>
+          <textarea id="result" rows="16" placeholder="Generated notes will appear here..."></textarea>
           <div id="copyStatus" class="muted"></div>
         </section>
       </main>
