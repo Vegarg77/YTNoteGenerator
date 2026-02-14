@@ -116,6 +116,23 @@ async function fetchTranscriptFromServer(videoUrl) {
   };
 }
 
+async function saveNoteToServer({ markdown, videoTitle }) {
+  const resp = await fetch("/api/save-note", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ markdown, videoTitle })
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Save API error: ${resp.status} ${text}`);
+  }
+
+  return resp.json();
+}
+
 async function openaiChatCompletions({ apiKey, body, signal }) {
   const resp = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -354,9 +371,17 @@ async function run() {
       videoUrl: meta.url || videoUrl
     });
 
+    setProgress("Saving note file…", 92);
+    const saveResult = await saveNoteToServer({
+      markdown,
+      videoTitle: meta.title
+    });
+    appendLog(`Saved note: ${saveResult.fileName}`);
+
     setProgress("Done", 100, "Note ready");
     resultEl.value = markdown;
     copyBtn.disabled = false;
+    copyStatus.textContent = `Saved to ${saveResult.filePath}`;
   } catch (err) {
     inputErr.textContent = err.message || "Something went wrong.";
     setProgress("Error", 100, err.message || "Failed");
