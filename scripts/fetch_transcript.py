@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import inspect
 import os
 import sys
 from collections.abc import Iterable
@@ -94,26 +93,20 @@ def _normalize_items(raw):
     return normalized
 
 
-def _fetch_transcript(api_class, video_id):
-    errors = []
-    proxy_config = _build_proxy_config(required=True)
-
+def _fetch_with_api_instance(api_instance, video_id, errors):
     def add_error(message):
         if message and message not in errors:
             errors.append(message)
+
+    if not api_instance:
+        return None
 
     fetch_attempts = [
         {"kwargs": {"languages": ["en", "en-US", "en-GB"]}, "label": "fetch(languages=en*)"},
         {"kwargs": {}, "label": "fetch(default-language)"}
     ]
 
-    try:
-        api_instance = api_class(proxy_config=proxy_config)
-    except Exception as exc:
-        add_error(f"API class initialization failed: {exc}")
-        api_instance = None
-
-    if api_instance and hasattr(api_instance, "fetch"):
+    if hasattr(api_instance, "fetch"):
         for attempt in fetch_attempts:
             try:
                 return api_instance.fetch(video_id, **attempt["kwargs"]), "yt-transcript-api:fetch"
@@ -125,9 +118,9 @@ def _fetch_transcript(api_class, video_id):
                 add_error(f"{attempt['label']} failed: {exc}")
 
     transcript_list_method = None
-    if api_instance and hasattr(api_instance, "list"):
+    if hasattr(api_instance, "list"):
         transcript_list_method = api_instance.list
-    elif api_instance and hasattr(api_instance, "list_transcripts"):
+    elif hasattr(api_instance, "list_transcripts"):
         transcript_list_method = api_instance.list_transcripts
 
     if transcript_list_method:
@@ -146,10 +139,10 @@ def _fetch_transcript(api_class, video_id):
         except Exception as exc:
             add_error(f"list/find_transcript failed: {exc}")
 
-    raise RuntimeError("; ".join(errors[:4]) if errors else "No compatible transcript API method found")
+    return None
 
 
-def _build_proxy_config(required=False):
+def _build_proxy_urls(required=False):
     explicit_proxy_url = os.getenv("YT_PROXY_URL", "").strip()
 
     bright_data_username = os.getenv("BRIGHT_DATA_USERNAME", "").strip()
@@ -157,17 +150,38 @@ def _build_proxy_config(required=False):
     bright_data_host = os.getenv("BRIGHT_DATA_HOST", "brd.superproxy.io").strip() or "brd.superproxy.io"
     bright_data_port = os.getenv("BRIGHT_DATA_PORT", "33335").strip() or "33335"
 
-    proxy_url = explicit_proxy_url
-    if not proxy_url and bright_data_username and bright_data_password:
-        proxy_url = f"http://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}"
+    urls = []
+    if explicit_proxy_url:
+        urls.append((explicit_proxy_url, "explicit"))
 
-    if not proxy_url:
-        if required:
-            raise RuntimeError(
-                "Proxy is required but no proxy credentials were found. "
-                "Set YT_PROXY_URL or BRIGHT_DATA_USERNAME and BRIGHT_DATA_PASSWORD (recommended via .env)."
-            )
-        return None
+    if bright_data_username and bright_data_password:
+        # Bright Data endpoint can be configured either as HTTP proxy URL
+        # (common) or HTTPS proxy URL (TLS to proxy endpoint).
+        urls.append((f"http://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}", "brightdata-http"))
+        urls.append((f"https://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}", "brightdata-https"))
+
+    deduped = []
+    seen = set()
+    for proxy_url, label in urls:
+        key = proxy_url.strip()
+        if key and key not in seen:
+            deduped.append((key, label))
+            seen.add(key)
+
+    if not deduped and required:
+        raise RuntimeError(
+            "Proxy is required but no proxy credentials were found. "
+            "Set YT_PROXY_URL or BRIGHT_DATA_USERNAME and BRIGHT_DATA_PASSWORD (recommended via .env)."
+        )
+
+    return deduped
+
+
+def _build_proxy_configs(required=False):
+    proxy_urls = _build_proxy_urls(required=required)
+
+    if not proxy_urls:
+        return []
 
     proxy_class = None
     for module_name in ("yt_transcript_api.proxies", "youtube_transcript_api.proxies"):
@@ -185,10 +199,39 @@ def _build_proxy_config(required=False):
             "Install an updated yt-transcript-api package from https://github.com/FFD2025/yt-transcript-api"
         )
 
-    try:
-        return proxy_class(http_url=proxy_url, https_url=proxy_url)
-    except TypeError:
-        return proxy_class(proxy_url, proxy_url)
+    configs = []
+    for proxy_url, label in proxy_urls:
+        try:
+            config = proxy_class(http_url=proxy_url, https_url=proxy_url)
+        except TypeError:
+            config = proxy_class(proxy_url, proxy_url)
+        configs.append((config, label))
+
+    return configs
+
+
+def _fetch_transcript(api_class, video_id):
+    errors = []
+    proxy_configs = _build_proxy_configs(required=True)
+
+    def add_error(message):
+        if message and message not in errors:
+            errors.append(message)
+
+    def init_api_instance(proxy):
+        try:
+            return api_class(proxy_config=proxy)
+        except Exception as exc:
+            add_error(f"API class initialization failed: {exc}")
+            return None
+
+    for proxy_config, label in proxy_configs:
+        result = _fetch_with_api_instance(init_api_instance(proxy_config), video_id, errors)
+        if result:
+            raw, source = result
+            return raw, f"{source}:{label}"
+
+    raise RuntimeError("; ".join(errors[:8]) if errors else "No compatible transcript API method found")
 
 
 def main():
