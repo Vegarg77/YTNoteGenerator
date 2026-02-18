@@ -4,6 +4,29 @@ const path = require("path");
 const { URL } = require("url");
 const { spawn } = require("child_process");
 
+function loadDotenv() {
+  const envPath = path.join(__dirname, ".env");
+  if (!fs.existsSync(envPath)) return;
+
+  const raw = fs.readFileSync(envPath, "utf8");
+  for (const lineRaw of raw.replaceAll(String.fromCharCode(13), "").split("\n")) {
+    const line = lineRaw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const idx = line.indexOf("=");
+    if (idx < 0) continue;
+
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    value = value.replace(/^['"]|['"]$/g, "");
+
+    if (key && !(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadDotenv();
+
 const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 const TRANSCRIPT_SCRIPT = path.join(__dirname, "scripts", "fetch_transcript.py");
@@ -142,35 +165,20 @@ function runTranscriptScript(videoId, signal) {
   });
 }
 
-async function fetchVideoMetadata(rawUrl, videoId, signal) {
+async function fetchVideoMetadata(rawUrl, videoId) {
   const targetUrl = rawUrl || `https://www.youtube.com/watch?v=${videoId}`;
 
-  try {
-    const endpoint = new URL("https://www.youtube.com/oembed");
-    endpoint.searchParams.set("url", targetUrl);
-    endpoint.searchParams.set("format", "json");
-
-    const resp = await fetch(endpoint, { signal });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-    const payload = await resp.json();
-    return {
-      title: payload?.title || "",
-      channel: payload?.author_name || "",
-      url: targetUrl
-    };
-  } catch {
-    return {
-      title: "",
-      channel: "",
-      url: targetUrl
-    };
-  }
+  // Keep metadata local to avoid non-proxied outbound requests.
+  return {
+    title: "",
+    channel: "",
+    url: targetUrl
+  };
 }
 
 async function fetchTranscriptBundle(videoId, rawUrl, signal) {
   const transcript = await runTranscriptScript(videoId, signal);
-  const metadata = await fetchVideoMetadata(rawUrl, videoId, signal);
+  const metadata = await fetchVideoMetadata(rawUrl, videoId);
   return {
     ...transcript,
     metadata

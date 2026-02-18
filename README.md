@@ -39,6 +39,15 @@ Requirements
 - Python available on PATH as `python` (or set `PYTHON_CMD` before launching `server.js`)
 - `yt-transcript-api` installed in that Python environment
 
+Proxy mode (Bright Data, required)
+- The transcript bridge now requires proxy configuration for all outbound transcript requests.
+- Proxy values are loaded from `.env` automatically.
+- Configure either:
+  - `YT_PROXY_URL` (full proxy URL), or
+  - Bright Data credentials: `BRIGHT_DATA_USERNAME`, `BRIGHT_DATA_PASSWORD`, with optional `BRIGHT_DATA_HOST` (default `brd.superproxy.io`) and `BRIGHT_DATA_PORT` (default `33335`).
+- A starter `.env` file is included in the repo root; update it with your actual Bright Data credentials.
+- This requires a `yt-transcript-api` build that includes `GenericProxyConfig` (the FFD2025 fork referenced above).
+
 Install (Developer/Unpacked)
 1. Clone or download this repository.
 2. Open Chrome → Extensions → Enable “Developer mode”.
