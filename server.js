@@ -166,13 +166,17 @@ function runTranscriptScript(videoId, signal) {
 }
 
 async function fetchVideoMetadata(rawUrl, videoId) {
-  const targetUrl = rawUrl || `https://www.youtube.com/watch?v=${videoId}`;
+  const resolvedVideoId = (videoId || parseVideoId(rawUrl || "") || "").trim();
+  const targetUrl = rawUrl || (resolvedVideoId ? `https://www.youtube.com/watch?v=${resolvedVideoId}` : "");
 
   // Keep metadata local to avoid non-proxied outbound requests.
+  // Preserve a deterministic, non-empty title so note filenames remain stable per video.
+  const fallbackTitle = resolvedVideoId ? `YouTube Video ${resolvedVideoId}` : "YouTube Video";
+
   return {
-    title: "",
+    title: fallbackTitle,
     channel: "",
-    url: targetUrl
+    url: targetUrl || "https://www.youtube.com"
   };
 }
 
