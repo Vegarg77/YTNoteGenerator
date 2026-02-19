@@ -158,7 +158,7 @@ function asTrimmedString(value) {
 }
 
 function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
-  const transcriptRaw = pickFirstByKeys(item, ["transcript", "captions", "subtitle", "subtitles", "description"]);
+  const transcriptRaw = pickFirstByKeys(item, ["transcript", "captions", "subtitle", "subtitles"]);
   const transcriptCandidates = collectStringValues(transcriptRaw);
   const transcript = transcriptCandidates.join("\n").trim();
 
