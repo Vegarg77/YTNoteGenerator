@@ -230,7 +230,7 @@ async function fetchTranscriptBundle(videoId, rawUrl, signal) {
       Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ input: [{ url: resolvedUrl, video_id: videoId }] }),
+    body: JSON.stringify({ input: [{ url: resolvedUrl }] }),
     signal
   });
 
