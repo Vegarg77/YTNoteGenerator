@@ -4,6 +4,7 @@ import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import quote
 
 
 def _load_dotenv():
@@ -170,8 +171,10 @@ def _build_proxy_candidates(required=False):
         candidates.append((explicit_proxy_url, explicit_proxy_url, "explicit"))
 
     if bright_data_username and bright_data_password:
-        base_http = f"http://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}"
-        base_https = f"https://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}"
+        encoded_username = quote(bright_data_username, safe="")
+        encoded_password = quote(bright_data_password, safe="")
+        base_http = f"http://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
+        base_https = f"https://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
 
         # Prefer HTTP proxy URL for both HTTP and HTTPS target traffic. This is
         # the most widely supported setup for CONNECT-style proxying.
