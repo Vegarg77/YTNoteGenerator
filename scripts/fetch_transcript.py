@@ -4,7 +4,7 @@ import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 
 def _load_dotenv():
@@ -143,6 +143,23 @@ def _fetch_with_api_instance(api_instance, video_id, errors):
     return None
 
 
+
+def _credential_encoding_candidates(value):
+    """Return encoded credential variants for compatibility with legacy .env values."""
+    direct = quote(value, safe="")
+
+    candidates = [direct]
+
+    # Some deployments historically stored credentials pre-encoded. Keep a
+    # compatibility fallback, but only as an additional candidate so literal
+    # percent+hex text (for example "%40") still works as-is.
+    canonical = quote(unquote(value), safe="")
+    if canonical not in candidates:
+        candidates.append(canonical)
+
+    return candidates
+
+
 def _build_proxy_candidates(required=False):
     explicit_proxy_url = os.getenv("YT_PROXY_URL", "").strip()
     explicit_http_url = os.getenv("YT_PROXY_HTTP_URL", "").strip()
@@ -171,18 +188,22 @@ def _build_proxy_candidates(required=False):
         candidates.append((explicit_proxy_url, explicit_proxy_url, "explicit"))
 
     if bright_data_username and bright_data_password:
-        encoded_username = quote(bright_data_username, safe="")
-        encoded_password = quote(bright_data_password, safe="")
-        base_http = f"http://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
-        base_https = f"https://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
+        username_candidates = _credential_encoding_candidates(bright_data_username)
+        password_candidates = _credential_encoding_candidates(bright_data_password)
 
-        # Prefer HTTP proxy URL for both HTTP and HTTPS target traffic. This is
-        # the most widely supported setup for CONNECT-style proxying.
-        candidates.append((base_http, base_http, "brightdata-http-tunnel"))
+        for username_idx, encoded_username in enumerate(username_candidates):
+            for password_idx, encoded_password in enumerate(password_candidates):
+                suffix = f"u{username_idx}-p{password_idx}"
+                base_http = f"http://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
+                base_https = f"https://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
 
-        # Fallback for providers/zones that explicitly require TLS when talking
-        # to the proxy endpoint.
-        candidates.append((base_http, base_https, "brightdata-https-proxy"))
+                # Prefer HTTP proxy URL for both HTTP and HTTPS target traffic. This is
+                # the most widely supported setup for CONNECT-style proxying.
+                candidates.append((base_http, base_http, f"brightdata-http-tunnel:{suffix}"))
+
+                # Fallback for providers/zones that explicitly require TLS when talking
+                # to the proxy endpoint.
+                candidates.append((base_http, base_https, f"brightdata-https-proxy:{suffix}"))
 
     deduped = []
     seen = set()
