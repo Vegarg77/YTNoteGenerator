@@ -4,7 +4,7 @@ import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 
 def _load_dotenv():
@@ -171,8 +171,10 @@ def _build_proxy_candidates(required=False):
         candidates.append((explicit_proxy_url, explicit_proxy_url, "explicit"))
 
     if bright_data_username and bright_data_password:
-        encoded_username = quote(bright_data_username, safe="")
-        encoded_password = quote(bright_data_password, safe="")
+        # Canonicalize credentials to avoid double-encoding values that may
+        # already be percent-encoded in existing deployments (.env files).
+        encoded_username = quote(unquote(bright_data_username), safe="")
+        encoded_password = quote(unquote(bright_data_password), safe="")
         base_http = f"http://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
         base_https = f"https://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
 
