@@ -2,7 +2,6 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { URL } = require("url");
-const { spawn } = require("child_process");
 
 function loadDotenv() {
   const envPath = path.join(__dirname, ".env");
@@ -29,9 +28,13 @@ loadDotenv();
 
 const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
-const TRANSCRIPT_SCRIPT = path.join(__dirname, "scripts", "fetch_transcript.py");
-const PYTHON_CMD = process.env.PYTHON_CMD || "python";
 const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
+
+const BRIGHT_DATA_API_TOKEN = (process.env.BRIGHT_DATA_API_TOKEN || "").trim();
+const BRIGHT_DATA_YT_DATASET_ID = (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim();
+const BRIGHT_DATA_API_BASE = (process.env.BRIGHT_DATA_API_BASE || "https://api.brightdata.com").replace(/\/$/, "");
+const BRIGHT_DATA_TIMEOUT_MS = Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 60000;
+const BRIGHT_DATA_POLL_INTERVAL_MS = Number(process.env.BRIGHT_DATA_POLL_INTERVAL_MS) || 2000;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -106,86 +109,161 @@ function parseVideoId(inputUrl) {
   }
 }
 
-function runTranscriptScript(videoId, signal) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(PYTHON_CMD, [TRANSCRIPT_SCRIPT, videoId], {
-      cwd: __dirname,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
+async function fetchJson(url, { method = "GET", headers = {}, body, signal } = {}) {
+  const resp = await fetch(url, { method, headers, body, signal });
 
-    let stdout = "";
-    let stderr = "";
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Bright Data API ${method} ${url} failed (${resp.status}): ${text || resp.statusText}`);
+  }
 
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
+  const text = await resp.text();
+  if (!text) return {};
 
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    const onAbort = () => {
-      child.kill("SIGTERM");
-      reject(new Error("Transcript fetch aborted"));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.on("error", (err) => {
-      signal?.removeEventListener("abort", onAbort);
-      reject(new Error(`Failed to execute transcript script: ${err.message}`));
-    });
-
-    child.on("close", (code) => {
-      signal?.removeEventListener("abort", onAbort);
-      if (code !== 0) {
-        reject(new Error((stderr || stdout || "Unknown transcript script failure").trim()));
-        return;
-      }
-
-      try {
-        const parsed = JSON.parse(stdout);
-        if (!parsed?.transcript || typeof parsed.transcript !== "string") {
-          throw new Error("Transcript script returned empty transcript");
-        }
-
-        resolve({
-          text: parsed.transcript,
-          source: parsed.source || "yt-transcript-api"
-        });
-      } catch (err) {
-        reject(new Error(`Invalid transcript script output: ${err.message}`));
-      }
-    });
-  });
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`Bright Data API ${method} ${url} returned non-JSON body`);
+  }
 }
 
-async function fetchVideoMetadata(rawUrl, videoId) {
-  const resolvedVideoId = (videoId || parseVideoId(rawUrl || "") || "").trim();
-  const targetUrl = rawUrl || (resolvedVideoId ? `https://www.youtube.com/watch?v=${resolvedVideoId}` : "");
+function parseBrightDataTriggerResponse(payload) {
+  return payload?.snapshot_id || payload?.snapshotId || payload?.id || payload?.data?.snapshot_id || "";
+}
 
-  // Keep metadata local to avoid non-proxied outbound requests.
-  // Preserve a deterministic, non-empty title so note filenames remain stable per video.
-  const fallbackTitle = resolvedVideoId ? `YouTube Video ${resolvedVideoId}` : "YouTube Video";
+function collectStringValues(value, results = []) {
+  if (typeof value === "string" && value.trim()) {
+    results.push(value.trim());
+    return results;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringValues(item, results);
+    return results;
+  }
+  if (value && typeof value === "object") {
+    for (const entry of Object.values(value)) collectStringValues(entry, results);
+  }
+  return results;
+}
+
+function pickFirstByKeys(item, keys) {
+  for (const key of keys) {
+    if (item?.[key] !== undefined && item?.[key] !== null) return item[key];
+  }
+  return "";
+}
+
+function asTrimmedString(value) {
+  return typeof value === "string" ? value.trim() : `${value || ""}`.trim();
+}
+
+function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
+  const transcriptRaw = pickFirstByKeys(item, ["transcript", "captions", "subtitle", "subtitles"]);
+  const transcriptCandidates = collectStringValues(transcriptRaw);
+  const transcript = transcriptCandidates.join("\n").trim();
+
+  const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
+  const channel = asTrimmedString(pickFirstByKeys(item, ["channel", "channel_name", "author", "uploader"]));
+  const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
+  const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
 
   return {
-    title: fallbackTitle,
-    channel: "",
-    url: targetUrl || "https://www.youtube.com"
+    transcript,
+    metadata: {
+      title,
+      channel,
+      url: sourceUrl || (sourceVideoId ? `https://www.youtube.com/watch?v=${sourceVideoId}` : "https://www.youtube.com")
+    }
   };
 }
 
+async function waitForPollInterval(signal) {
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, BRIGHT_DATA_POLL_INTERVAL_MS);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new Error("Bright Data polling aborted"));
+    }, { once: true });
+  });
+}
+
+async function pollBrightDataSnapshot(snapshotId, signal) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < BRIGHT_DATA_TIMEOUT_MS) {
+    const progressUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/progress/${encodeURIComponent(snapshotId)}`;
+    const progress = await fetchJson(progressUrl, {
+      headers: { Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}` },
+      signal
+    });
+
+    const status = String(progress?.status || "").toLowerCase();
+    if (status === "ready" || status === "completed" || status === "success") return;
+
+    if (status === "failed" || status === "error" || status === "cancelled") {
+      throw new Error(`Bright Data snapshot ${snapshotId} failed with status: ${progress?.status || "unknown"}`);
+    }
+
+    await waitForPollInterval(signal);
+  }
+
+  throw new Error(`Timed out waiting for Bright Data snapshot ${snapshotId}`);
+}
+
+function validateBrightDataConfig() {
+  const missing = [];
+  if (!BRIGHT_DATA_API_TOKEN) missing.push("BRIGHT_DATA_API_TOKEN");
+  if (!BRIGHT_DATA_YT_DATASET_ID) missing.push("BRIGHT_DATA_YT_DATASET_ID");
+  if (missing.length) {
+    throw new Error(`Missing Bright Data env vars: ${missing.join(", ")}`);
+  }
+}
+
 async function fetchTranscriptBundle(videoId, rawUrl, signal) {
-  const transcript = await runTranscriptScript(videoId, signal);
-  const metadata = await fetchVideoMetadata(rawUrl, videoId);
+  validateBrightDataConfig();
+
+  const resolvedUrl = rawUrl || `https://www.youtube.com/watch?v=${videoId}`;
+  const triggerUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/trigger?dataset_id=${encodeURIComponent(BRIGHT_DATA_YT_DATASET_ID)}&notify=false&include_errors=true`;
+
+  const triggerResp = await fetchJson(triggerUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ input: [{ url: resolvedUrl, video_id: videoId }] }),
+    signal
+  });
+
+  const snapshotId = parseBrightDataTriggerResponse(triggerResp);
+  if (!snapshotId) {
+    throw new Error("Bright Data trigger did not return a snapshot id");
+  }
+
+  await pollBrightDataSnapshot(snapshotId, signal);
+
+  const snapshotUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`;
+  const snapshotData = await fetchJson(snapshotUrl, {
+    headers: { Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}` },
+    signal
+  });
+
+  const items = Array.isArray(snapshotData)
+    ? snapshotData
+    : (Array.isArray(snapshotData?.data) ? snapshotData.data : []);
+
+  if (!items.length) {
+    throw new Error(`Bright Data snapshot ${snapshotId} returned no records`);
+  }
+
+  const parsed = parseBrightDataItem(items[0], resolvedUrl, videoId);
+  if (!parsed.transcript) {
+    throw new Error("Bright Data record did not include transcript text");
+  }
+
   return {
-    ...transcript,
-    metadata
+    text: parsed.transcript,
+    source: "bright-data-youtube-scraper",
+    metadata: parsed.metadata
   };
 }
 
@@ -229,7 +307,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const timer = setTimeout(() => ctrl.abort(), BRIGHT_DATA_TIMEOUT_MS + 5000);
 
     try {
       const { text, source, metadata } = await fetchTranscriptBundle(videoId, rawUrl, ctrl.signal);
