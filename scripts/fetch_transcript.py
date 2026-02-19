@@ -142,45 +142,67 @@ def _fetch_with_api_instance(api_instance, video_id, errors):
     return None
 
 
-def _build_proxy_urls(required=False):
+def _build_proxy_candidates(required=False):
     explicit_proxy_url = os.getenv("YT_PROXY_URL", "").strip()
+    explicit_http_url = os.getenv("YT_PROXY_HTTP_URL", "").strip()
+    explicit_https_url = os.getenv("YT_PROXY_HTTPS_URL", "").strip()
 
     bright_data_username = os.getenv("BRIGHT_DATA_USERNAME", "").strip()
     bright_data_password = os.getenv("BRIGHT_DATA_PASSWORD", "").strip()
     bright_data_host = os.getenv("BRIGHT_DATA_HOST", "brd.superproxy.io").strip() or "brd.superproxy.io"
-    bright_data_port = os.getenv("BRIGHT_DATA_PORT", "33335").strip() or "33335"
+    # Accept both BRIGHT_DATA_PORT and BRIGHT_DATA_port for resilience to .env casing typos.
+    bright_data_port = (
+        os.getenv("BRIGHT_DATA_PORT", "").strip()
+        or os.getenv("BRIGHT_DATA_port", "").strip()
+        or "33335"
+    )
 
-    urls = []
+    candidates = []
+
+    # Preferred explicit form: provide dedicated HTTP and/or HTTPS proxy URLs.
+    if explicit_http_url or explicit_https_url:
+        http_url = explicit_http_url or explicit_https_url
+        https_url = explicit_https_url or explicit_http_url
+        candidates.append((http_url, https_url, "explicit-paired"))
+
+    # Backward compatible explicit form: single URL used for both schemes.
     if explicit_proxy_url:
-        urls.append((explicit_proxy_url, "explicit"))
+        candidates.append((explicit_proxy_url, explicit_proxy_url, "explicit"))
 
     if bright_data_username and bright_data_password:
-        # Bright Data endpoint can be configured either as HTTP proxy URL
-        # (common) or HTTPS proxy URL (TLS to proxy endpoint).
-        urls.append((f"http://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}", "brightdata-http"))
-        urls.append((f"https://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}", "brightdata-https"))
+        base_http = f"http://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}"
+        base_https = f"https://{bright_data_username}:{bright_data_password}@{bright_data_host}:{bright_data_port}"
+
+        # Prefer HTTP proxy URL for both HTTP and HTTPS target traffic. This is
+        # the most widely supported setup for CONNECT-style proxying.
+        candidates.append((base_http, base_http, "brightdata-http-tunnel"))
+
+        # Fallback for providers/zones that explicitly require TLS when talking
+        # to the proxy endpoint.
+        candidates.append((base_http, base_https, "brightdata-https-proxy"))
 
     deduped = []
     seen = set()
-    for proxy_url, label in urls:
-        key = proxy_url.strip()
-        if key and key not in seen:
-            deduped.append((key, label))
+    for http_url, https_url, label in candidates:
+        key = f"{http_url.strip()}::{https_url.strip()}"
+        if http_url.strip() and https_url.strip() and key not in seen:
+            deduped.append((http_url.strip(), https_url.strip(), label))
             seen.add(key)
 
     if not deduped and required:
         raise RuntimeError(
             "Proxy is required but no proxy credentials were found. "
-            "Set YT_PROXY_URL or BRIGHT_DATA_USERNAME and BRIGHT_DATA_PASSWORD (recommended via .env)."
+            "Set YT_PROXY_URL or YT_PROXY_HTTP_URL/YT_PROXY_HTTPS_URL, or set "
+            "BRIGHT_DATA_USERNAME and BRIGHT_DATA_PASSWORD (recommended via .env)."
         )
 
     return deduped
 
 
 def _build_proxy_configs(required=False):
-    proxy_urls = _build_proxy_urls(required=required)
+    proxy_candidates = _build_proxy_candidates(required=required)
 
-    if not proxy_urls:
+    if not proxy_candidates:
         return []
 
     proxy_class = None
@@ -200,11 +222,11 @@ def _build_proxy_configs(required=False):
         )
 
     configs = []
-    for proxy_url, label in proxy_urls:
+    for http_url, https_url, label in proxy_candidates:
         try:
-            config = proxy_class(http_url=proxy_url, https_url=proxy_url)
+            config = proxy_class(http_url=http_url, https_url=https_url)
         except TypeError:
-            config = proxy_class(proxy_url, proxy_url)
+            config = proxy_class(http_url, https_url)
         configs.append((config, label))
 
     return configs
