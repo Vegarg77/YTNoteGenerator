@@ -22,7 +22,8 @@ Quick start
 
 Notes
 - The API key is never stored; it is used only in memory for the current run.
-- Transcript fetching is handled by a local Python bridge script that calls the `yt-transcript-api` package (https://github.com/FFD2025/yt-transcript-api).
+- Transcript fetching is asynchronous and uses Bright Data's YouTube dataset API only (trigger -> poll -> snapshot).
+- Bright Data credentials are loaded from `.env`; there is no local transcript-script fallback path.
 - Some videos (or regions) may still not expose captions.
 
 Permissions
@@ -36,21 +37,17 @@ The extension requests:
 
 Requirements
 - A valid OpenAI API key with access to the chosen chat-completions model (default: gpt-4o-mini)
-- Python available on PATH as `python` (or set `PYTHON_CMD` before launching `server.js`)
-- `yt-transcript-api` installed in that Python environment
+- Bright Data dataset API credentials configured in `.env` (see `.env.example`)
 
-Proxy mode (Bright Data, required)
-- Proxy values are loaded from `.env` automatically.
-- Configure either:
-  - `YT_PROXY_URL` (full proxy URL), or
-  - `YT_PROXY_HTTP_URL` and/or `YT_PROXY_HTTPS_URL` (recommended when your provider requires different proxy URLs by scheme), or
-  - Bright Data credentials only: `BRIGHT_DATA_USERNAME`, `BRIGHT_DATA_PASSWORD`, `BRIGHT_DATA_HOST`, `BRIGHT_DATA_PORT` (host/port default to `brd.superproxy.io` / `33335` if omitted).
-- Bright Data usernames/passwords are URL-encoded automatically, so special characters in credentials no longer break proxy authentication.
-- The transcript bridge uses proxy-only outbound requests (no direct fallback).
-- For Bright Data compatibility, generated credential-based proxy URLs use HTTP-tunnel mode (`http://...` for both HTTP/HTTPS requests). If your provider needs a different scheme, set explicit `YT_PROXY_HTTP_URL` / `YT_PROXY_HTTPS_URL`.
-- The loader also accepts `BRIGHT_DATA_port` as a compatibility fallback for accidental lowercase `port` in `.env`.
-- A starter `.env` file is included in the repo root; update it with your actual Bright Data credentials.
-- Proxy mode requires a `yt-transcript-api` build that includes `GenericProxyConfig` (the FFD2025 fork referenced above).
+Bright Data (required)
+- Copy `.env.example` to `.env` and fill in your credentials.
+- Required values:
+  - `BRIGHT_DATA_API_TOKEN`
+  - `BRIGHT_DATA_YT_DATASET_ID`
+- Optional values:
+  - `BRIGHT_DATA_API_BASE` (default: `https://api.brightdata.com`)
+  - `BRIGHT_DATA_TIMEOUT_MS`
+  - `BRIGHT_DATA_POLL_INTERVAL_MS`
 
 Install (Developer/Unpacked)
 1. Clone or download this repository.
