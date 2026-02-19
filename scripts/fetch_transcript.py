@@ -195,15 +195,15 @@ def _build_proxy_candidates(required=False):
             for password_idx, encoded_password in enumerate(password_candidates):
                 suffix = f"u{username_idx}-p{password_idx}"
                 base_http = f"http://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
-                base_https = f"https://{encoded_username}:{encoded_password}@{bright_data_host}:{bright_data_port}"
 
                 # Prefer HTTP proxy URL for both HTTP and HTTPS target traffic. This is
                 # the most widely supported setup for CONNECT-style proxying.
                 candidates.append((base_http, base_http, f"brightdata-http-tunnel:{suffix}"))
 
-                # Fallback for providers/zones that explicitly require TLS when talking
-                # to the proxy endpoint.
-                candidates.append((base_http, base_https, f"brightdata-https-proxy:{suffix}"))
+                # Some providers support TLS-to-proxy endpoints, but Bright Data proxy
+                # endpoints are expected to be reached via an HTTP proxy URL. Keep
+                # generated credentials HTTP-only and let explicit env URLs override
+                # scheme behavior when needed.
 
     deduped = []
     seen = set()
