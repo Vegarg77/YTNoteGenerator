@@ -45,6 +45,7 @@ Proxy mode (Bright Data, required)
   - `YT_PROXY_URL` (full proxy URL), or
   - `YT_PROXY_HTTP_URL` and/or `YT_PROXY_HTTPS_URL` (recommended when your provider requires different proxy URLs by scheme), or
   - Bright Data credentials only: `BRIGHT_DATA_USERNAME`, `BRIGHT_DATA_PASSWORD`, `BRIGHT_DATA_HOST`, `BRIGHT_DATA_PORT` (host/port default to `brd.superproxy.io` / `33335` if omitted).
+- Bright Data usernames/passwords are URL-encoded automatically, so special characters in credentials no longer break proxy authentication.
 - The transcript bridge uses proxy-only outbound requests (no direct fallback).
 - For Bright Data compatibility, it first tries HTTP-tunnel mode (`http://...` for both HTTP/HTTPS requests), then HTTPS-proxy mode as fallback.
 - The loader also accepts `BRIGHT_DATA_port` as a compatibility fallback for accidental lowercase `port` in `.env`.
