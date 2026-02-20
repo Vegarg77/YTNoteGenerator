@@ -168,11 +168,6 @@ function extractNestedString(value) {
     return "";
   }
   if (typeof value === "object") {
-    const keys = ["name", "title", "channel", "channel_name", "display_name", "text"];
-    for (const key of keys) {
-      const fromKey = extractNestedString(value[key]);
-      if (fromKey) return fromKey;
-    }
     for (const item of Object.values(value)) {
       const fromValue = extractNestedString(item);
       if (fromValue) return fromValue;
@@ -187,9 +182,7 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   const transcript = transcriptCandidates.join("\n").trim();
 
   const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
-  const channel = extractNestedString(
-    pickFirstByKeys(item, ["handle_name", "youtuber", "username", "channel_name", "channel"])
-  ) || "";
+  const channel = extractNestedString(item?.handle_name) || "";
   const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
   const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
 
