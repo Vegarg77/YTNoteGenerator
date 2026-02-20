@@ -157,10 +157,6 @@ function asTrimmedString(value) {
   return typeof value === "string" ? value.trim() : `${value || ""}`.trim();
 }
 
-function normalizeChannelName(value) {
-  return asTrimmedString(value).replace(/^@/, "");
-}
-
 function extractNestedString(value) {
   if (!value) return "";
   if (typeof value === "string") return value.trim();
@@ -172,7 +168,7 @@ function extractNestedString(value) {
     return "";
   }
   if (typeof value === "object") {
-    const keys = ["name", "title", "channel", "channel_name", "youtuber", "display_name", "text"];
+    const keys = ["name", "title", "channel", "channel_name", "display_name", "text"];
     for (const key of keys) {
       const fromKey = extractNestedString(value[key]);
       if (fromKey) return fromKey;
@@ -192,20 +188,16 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
 
   const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
   const channel =
-    normalizeChannelName(
-      extractNestedString(
-        pickFirstByKeys(item, [
-          "youtuber",
-          "channel",
-          "channel_name",
-          "channel_title",
-          "channelTitle",
-          "author",
-          "uploader",
-          "owner",
-          "creator"
-        ])
-      )
+    extractNestedString(
+      pickFirstByKeys(item, [
+        "channel",
+        "channel_name",
+        "channel_title",
+        "channelTitle",
+        "author",
+        "uploader",
+        "owner"
+      ])
     ) || "";
   const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
   const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
