@@ -157,13 +157,56 @@ function asTrimmedString(value) {
   return typeof value === "string" ? value.trim() : `${value || ""}`.trim();
 }
 
+function normalizeChannelName(value) {
+  return asTrimmedString(value).replace(/^@/, "");
+}
+
+function extractNestedString(value) {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const fromItem = extractNestedString(item);
+      if (fromItem) return fromItem;
+    }
+    return "";
+  }
+  if (typeof value === "object") {
+    const keys = ["name", "title", "channel", "channel_name", "youtuber", "display_name", "text"];
+    for (const key of keys) {
+      const fromKey = extractNestedString(value[key]);
+      if (fromKey) return fromKey;
+    }
+    for (const item of Object.values(value)) {
+      const fromValue = extractNestedString(item);
+      if (fromValue) return fromValue;
+    }
+  }
+  return "";
+}
+
 function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   const transcriptRaw = pickFirstByKeys(item, ["transcript", "captions", "subtitle", "subtitles"]);
   const transcriptCandidates = collectStringValues(transcriptRaw);
   const transcript = transcriptCandidates.join("\n").trim();
 
   const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
-  const channel = asTrimmedString(pickFirstByKeys(item, ["channel", "channel_name", "author", "uploader"]));
+  const channel =
+    normalizeChannelName(
+      extractNestedString(
+        pickFirstByKeys(item, [
+          "youtuber",
+          "channel",
+          "channel_name",
+          "channel_title",
+          "channelTitle",
+          "author",
+          "uploader",
+          "owner",
+          "creator"
+        ])
+      )
+    ) || "";
   const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
   const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
 
