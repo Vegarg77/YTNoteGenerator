@@ -176,13 +176,62 @@ function extractNestedString(value) {
   return "";
 }
 
+function extractChannelLabel(value) {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (/^https?:\/\//i.test(trimmed)) return "";
+    if (/^UC[\w-]{6,}$/i.test(trimmed)) return "";
+    return trimmed;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const label = extractChannelLabel(item);
+      if (label) return label;
+    }
+    return "";
+  }
+
+  if (typeof value === "object") {
+    const preferredKeys = [
+      "text",
+      "label",
+      "title",
+      "display_text",
+      "displayText",
+      "display_name",
+      "displayName",
+      "name",
+      "handle"
+    ];
+
+    for (const key of preferredKeys) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const label = extractChannelLabel(value[key]);
+        if (label) return label;
+      }
+    }
+
+    for (const [key, nested] of Object.entries(value)) {
+      if (/url|link|href|id|identifier/i.test(key)) continue;
+      const label = extractChannelLabel(nested);
+      if (label) return label;
+    }
+  }
+
+  return "";
+}
+
 function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   const transcriptRaw = pickFirstByKeys(item, ["transcript", "captions", "subtitle", "subtitles"]);
   const transcriptCandidates = collectStringValues(transcriptRaw);
   const transcript = transcriptCandidates.join("\n").trim();
 
   const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
-  const channel = extractNestedString(item?.handle_name) || "";
+  const channel = extractChannelLabel(item?.handle_name) || extractNestedString(item?.handle_name) || "";
   const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
   const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
 
