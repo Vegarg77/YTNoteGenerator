@@ -190,6 +190,9 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   const channel =
     extractNestedString(
       pickFirstByKeys(item, [
+        "youtuber",
+        "username",
+        "uploader_name",
         "channel",
         "channel_name",
         "channel_title",
