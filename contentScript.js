@@ -64,6 +64,30 @@
     } catch { return null; }
   }
 
+  function getChannelName() {
+    const selectors = [
+      'ytd-channel-name a',
+      '#channel-name a',
+      '#owner-name a',
+      'ytd-video-owner-renderer #text a',
+      'a[href^="/@"]',
+      'meta[itemprop="author"]'
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (!el) continue;
+
+      const fromAttr = el.getAttribute('content') || el.getAttribute('title');
+      const value = (fromAttr || el.textContent || '').trim();
+      if (value) return value.replace(/^@/, '');
+    }
+
+    const authorLink = document.querySelector('link[itemprop="name"]');
+    const fallback = (authorLink?.getAttribute('content') || '').trim();
+    return fallback ? fallback.replace(/^@/, '') : '';
+  }
+
   async function scrapeAll() {
     // Title
     let title = '';
@@ -75,9 +99,7 @@
     }
 
     // Channel
-    let channel = '';
-    const ch = document.querySelector('ytd-channel-name a, #channel-name a, #owner-name a');
-    if (ch) channel = ch.textContent.trim();
+    const channel = getChannelName();
 
     const url = location.href;
     const videoId = getVideoIdFromUrl(url);
