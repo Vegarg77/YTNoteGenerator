@@ -187,7 +187,9 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   const transcript = transcriptCandidates.join("\n").trim();
 
   const title = asTrimmedString(pickFirstByKeys(item, ["title", "video_title", "name"]));
-  const channel = extractNestedString(pickFirstByKeys(item, ["handle_name"])) || "";
+  const channel = extractNestedString(
+    pickFirstByKeys(item, ["handle_name", "youtuber", "username", "channel_name", "channel"])
+  ) || "";
   const sourceUrl = asTrimmedString(pickFirstByKeys(item, ["url", "video_url", "link"])) || fallbackUrl;
   const sourceVideoId = asTrimmedString(pickFirstByKeys(item, ["video_id", "id"])) || fallbackVideoId;
 
