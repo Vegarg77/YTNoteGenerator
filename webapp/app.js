@@ -292,7 +292,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
         {
           role: "user",
           content:
-            "Clean the following transcript. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs.\n\nTRANSCRIPT:\n" +
+            "Clean the following transcript. If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nTRANSCRIPT:\n" +
             transcript
         }
       ]
@@ -324,7 +324,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
           {
             role: "user",
             content:
-              `You will clean a chunk of a transcript (part ${i + 1} of ${chunks.length}). Fix punctuation, capitalization, homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs.\n\nCHUNK_TEXT:\n` +
+              `You will clean a chunk of a transcript (part ${i + 1} of ${chunks.length}). If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nCHUNK_TEXT:\n` +
               chunks[i]
           }
         ]

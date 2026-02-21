@@ -257,7 +257,7 @@ async function cleanAll({ apiKey, model, transcript, signal }) {
     messages: [
       { role: "system", content: "You are a precise transcription editor." },
       { role: "user", content:
-        "Clean the following transcript. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs.\n\nTRANSCRIPT:\n" +
+        "Clean the following transcript. If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nTRANSCRIPT:\n" +
         transcript }
     ]
   };
@@ -270,7 +270,7 @@ async function cleanChunk({ apiKey, model, chunk, idx, total, signal }) {
     messages: [
       { role: "system", content: "You are a precise transcription editor." },
       { role: "user", content:
-        `You will clean a chunk of a transcript (part ${idx+1} of ${total}). Fix punctuation, capitalization, homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs.\n\nCHUNK_TEXT:\n` +
+        `You will clean a chunk of a transcript (part ${idx+1} of ${total}). If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nCHUNK_TEXT:\n` +
         chunk }
     ]
   };
