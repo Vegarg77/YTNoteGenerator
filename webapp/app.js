@@ -236,7 +236,7 @@ async function openaiResponses({ apiKey, body, signal }) {
   return normalizeResponseOutputText(data);
 }
 
-async function openaiText({ apiKey, model, messages, signal }) {
+async function openaiText({ apiKey, model, messages, temperature, signal }) {
   const isGpt5Family = /^gpt-5/i.test(model || "");
 
   if (isGpt5Family) {
@@ -245,6 +245,7 @@ async function openaiText({ apiKey, model, messages, signal }) {
       signal,
       body: {
         model,
+        temperature,
         input: messages
       }
     });
@@ -255,6 +256,7 @@ async function openaiText({ apiKey, model, messages, signal }) {
     signal,
     body: {
       model,
+      temperature,
       messages
     }
   });
@@ -284,26 +286,22 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   panel.setProgress("Cleaning transcript…", 38, "Preparing");
   let fixedTranscript = "";
   if (transcript.length <= 12000) {
-    const body = {
-      model,
-      temperature: 0.1,
-      messages: [
-        { role: "system", content: "You are a precise transcription editor." },
-        {
-          role: "user",
-          content:
-            "Clean the following transcript. If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nTRANSCRIPT:\n" +
-            transcript
-        }
-      ]
-    };
+    const cleanMessages = [
+      { role: "system", content: "You are a precise transcription editor." },
+      {
+        role: "user",
+        content:
+          "Clean the following transcript. If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nTRANSCRIPT:\n" +
+          transcript
+      }
+    ];
     const hb = startHeartbeat(panel, "Cleaning transcript…");
     try {
       try {
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, "OpenAI (clean)");
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean)");
       } catch {
         panel.setProgress("Retrying clean…", 45);
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, "OpenAI (clean retry)");
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean retry)");
       }
     } finally {
       stopHeartbeat(hb);
@@ -316,26 +314,22 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
       const chunkLabel = `Cleaning chunk ${i + 1}/${chunks.length}`;
       panel.setProgress(chunkLabel, 38 + Math.round((i / chunks.length) * 25));
       panel.appendLog(chunkLabel);
-      const body = {
-        model,
-        temperature: 0.1,
-        messages: [
-          { role: "system", content: "You are a precise transcription editor." },
-          {
-            role: "user",
-            content:
-              `You will clean a chunk of a transcript (part ${i + 1} of ${chunks.length}). If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nCHUNK_TEXT:\n` +
-              chunks[i]
-          }
-        ]
-      };
+      const cleanChunkMessages = [
+        { role: "system", content: "You are a precise transcription editor." },
+        {
+          role: "user",
+          content:
+            `You will clean a chunk of a transcript (part ${i + 1} of ${chunks.length}). If any part is not in English, translate it to clear natural English while preserving the original meaning and tone. Fix punctuation, capitalization, and homophones; remove non-speech tags like [Music]/[Applause] unless meaningful. No timestamps. Output ONLY clean Markdown paragraphs in English.\n\nCHUNK_TEXT:\n` +
+            chunks[i]
+        }
+      ];
       let cleaned;
       try {
-        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: body.messages, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
+        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
       } catch {
         panel.setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
         cleaned = await withTimeout(
-          (signal) => openaiText({ apiKey, model, messages: body.messages, signal }),
+          (signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }),
           120000,
           `OpenAI (clean chunk ${i + 1} retry)`
         );
@@ -346,29 +340,25 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   }
 
   panel.setProgress("Summarizing…", 70, "3–5 paragraph summary");
-  const sumBody = {
-    model,
-    temperature: 0.2,
-    messages: [
-      { role: "system", content: "You are an expert at writing structured, detailed summaries." },
-      {
-        role: "user",
-        content:
-          `Write a detailed summary (3–5 paragraphs; each 3–6 sentences) of the transcript below. Use concise, readable Markdown. No timestamps.\n\nVideo Title: ${meta.title || ""}\nChannel: ${meta.channel || ""}\n\nTRANSCRIPT:\n` +
-          fixedTranscript.slice(0, 180000)
-      }
-    ]
-  };
+  const summaryMessages = [
+    { role: "system", content: "You are an expert at writing structured, detailed summaries." },
+    {
+      role: "user",
+      content:
+        `Write a detailed summary (3–5 paragraphs; each 3–6 sentences) of the transcript below. Use concise, readable Markdown. No timestamps.\n\nVideo Title: ${meta.title || ""}\nChannel: ${meta.channel || ""}\n\nTRANSCRIPT:\n` +
+        fixedTranscript.slice(0, 180000)
+    }
+  ];
 
   let summary = "";
   {
     const hb = startHeartbeat(panel, "Summarizing…");
     try {
       try {
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: sumBody.messages, signal }), 120000, "OpenAI (summary)");
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary)");
       } catch {
         panel.setProgress("Retrying summary…", 74);
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: sumBody.messages, signal }), 120000, "OpenAI (summary retry)");
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary retry)");
       }
     } finally {
       stopHeartbeat(hb);

@@ -139,7 +139,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
   }
   if (msg?.type === 'OFFSCREEN_ACK' && msg.jobId) {
     const s = jobState.get(msg.jobId) || {};
-    s.acked = true; jobState.set(msg.jobId, s);
     if (!s.ackReported) {
       s.ackReported = true; jobState.set(msg.jobId, s);
       report("Offscreen ACK’d, running…", 8);
@@ -149,6 +148,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
     chrome.storage.local.set({ lastResult: msg.payload }).catch(()=>{});
     reportDone(msg.payload?.markdown || '');
     notifyDone(msg.payload?.title || '');
+    if (msg.jobId) jobState.delete(msg.jobId);
     stopSpinnerSW(); // <- ensure spinner stops on success
     closeOffscreenSafely();
   }
@@ -163,6 +163,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
         runInServiceWorker(s.tabId, s.apiKey, s.model); // fallback path restarts spinner below if needed
       }
     }
+    if (msg.jobId) jobState.delete(msg.jobId);
     closeOffscreenSafely();
   }
 });
@@ -413,7 +414,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Assign a jobId so we can correlate messages + fallback
         const jobId = `${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-        jobState.set(jobId, { acked: false, ackReported: false, fallbackStarted: false, tabId, apiKey, model });
+        jobState.set(jobId, { ackReported: false, fallbackStarted: false, tabId, apiKey, model });
 
         // Try Offscreen with handshake
         try {
@@ -423,9 +424,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           // Wait up to 2s for ACK; otherwise fallback
           const acked = await new Promise((resolve) => {
-            const timeout = setTimeout(()=>resolve(false), 2000);
+            let settled = false;
+            const timeout = setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              chrome.runtime.onMessage.removeListener(listener);
+              resolve(false);
+            }, 2000);
             const listener = (m) => {
+              if (settled) return;
               if (m?.type === 'OFFSCREEN_ACK' && m.jobId === jobId) {
+                settled = true;
                 chrome.runtime.onMessage.removeListener(listener);
                 clearTimeout(timeout); resolve(true);
               }
@@ -434,15 +443,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
 
           if (!acked) {
-            const s = jobState.get(jobId) || {}; s.fallbackStarted = true; jobState.set(jobId, s);
             report("Offscreen didn’t ACK → using fallback", 7);
             runInServiceWorker(tabId, apiKey, model);
+            jobState.delete(jobId);
           }
           sendResponse({ ok: true, handedOff: acked });
         } catch (e) {
-          const s = jobState.get(jobId) || {}; s.fallbackStarted = true; jobState.set(jobId, s);
           report("Offscreen failed → using fallback", 6, e.message || "No response from offscreen");
           runInServiceWorker(tabId, apiKey, model);
+          jobState.delete(jobId);
           sendResponse({ ok: true, handedOff: false, fallback: true });
         }
       } catch (e) {

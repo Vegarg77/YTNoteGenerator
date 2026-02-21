@@ -50,7 +50,7 @@ function withTimeout(promiseFactory, ms, label="operation") {
 
 // ---- Messaging helpers back to SW
 function progress(stage, pct, note) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_PROGRESS', stage, pct, note }); }
-function done(payload) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_DONE', payload }); }
+function done(payload, jobId) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_DONE', payload, jobId }); }
 function fail(error, jobId) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_ERROR', error: String(error), jobId }); }
 function ack(jobId) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_ACK', jobId }); }
 
@@ -58,6 +58,11 @@ function ack(jobId) { chrome.runtime.sendMessage({ type: 'OFFSCREEN_ACK', jobId 
 function swScrape(tabId) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: 'REQ_SCRAPE', tabId }, (resp) => {
+      const le = chrome.runtime.lastError;
+      if (le) {
+        reject(new Error(le.message || "Scrape request failed"));
+        return;
+      }
       if (!resp || resp.ok === false) {
         reject(new Error(resp?.error || "Scrape failed"));
       } else {
@@ -173,7 +178,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
           { role: "system", content: "You are an expert at writing structured, detailed summaries." },
           { role: "user", content:
             `Write a detailed summary (3–5 paragraphs; each 3–6 sentences) of the transcript below. Use concise, readable Markdown. No timestamps.\n\nVideo Title: ${title || ''}\nChannel: ${channel || ''}\n\nTRANSCRIPT:\n` +
-            fixedTranscript.slice(0, 180000) }
+            fixedTranscript.slice(0, 90000) }
         ]
       };
       let summary = "";
@@ -194,7 +199,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
       const { date, time } = nowDateTimeStrings();
       const markdown = buildNoteMarkdown({ date, time, channel, summary, fixedTranscript, videoUrl: url });
       const payload = { ts: Date.now(), title, channel, url, date, time, markdown };
-      done(payload);
+      done(payload, jobId);
     } catch (e) {
       fail(e.message || String(e), jobId);
     }
