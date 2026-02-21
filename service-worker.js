@@ -132,7 +132,15 @@ async function closeOffscreenSafely() {
 }
 
 // ---------- Receive messages from Offscreen and forward to popup/UI ----------
-const jobState = new Map(); // jobId -> { acked, ackReported, fallbackStarted, tabId, apiKey, model }
+const jobState = new Map(); // jobId -> { ackReported, fallbackStarted, tabId, apiKey, model }
+function markFallbackStarted(jobId, nextState) {
+  jobState.set(jobId, { ...nextState, fallbackStarted: true });
+  // Keep fallback marker briefly so delayed offscreen errors are ignored.
+  setTimeout(() => {
+    const s = jobState.get(jobId);
+    if (s?.fallbackStarted) jobState.delete(jobId);
+  }, 60_000);
+}
 chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
   if (msg?.type === 'OFFSCREEN_PROGRESS') {
     report(msg.stage || 'Working…', msg.pct ?? 0, msg.note || '');
@@ -157,7 +165,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, _sendResponse) => {
     stopSpinnerSW(); // <- ensure spinner stops on error
     if (msg.jobId) {
       const s = jobState.get(msg.jobId) || {};
-      if (!s.fallbackStarted) {
+      if (!s.fallbackStarted && s.tabId && s.apiKey && s.model) {
         s.fallbackStarted = true; jobState.set(msg.jobId, s);
         report("Offscreen error → switching to fallback", 9, msg.error || "");
         runInServiceWorker(s.tabId, s.apiKey, s.model); // fallback path restarts spinner below if needed
@@ -444,14 +452,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           if (!acked) {
             report("Offscreen didn’t ACK → using fallback", 7);
+            const s = jobState.get(jobId) || { tabId, apiKey, model };
+            markFallbackStarted(jobId, s);
             runInServiceWorker(tabId, apiKey, model);
-            jobState.delete(jobId);
           }
           sendResponse({ ok: true, handedOff: acked });
         } catch (e) {
           report("Offscreen failed → using fallback", 6, e.message || "No response from offscreen");
+          const s = jobState.get(jobId) || { tabId, apiKey, model };
+          markFallbackStarted(jobId, s);
           runInServiceWorker(tabId, apiKey, model);
-          jobState.delete(jobId);
           sendResponse({ ok: true, handedOff: false, fallback: true });
         }
       } catch (e) {
