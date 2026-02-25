@@ -449,7 +449,9 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readJsonBody(req);
       const markdown = typeof payload?.markdown === "string" ? payload.markdown : "";
-      const noteTitle = typeof payload?.noteTitle === "string" ? payload.noteTitle : "";
+      const noteTitle = typeof payload?.noteTitle === "string" && payload.noteTitle.trim()
+        ? payload.noteTitle
+        : (typeof payload?.videoTitle === "string" ? payload.videoTitle : "");
       const noteType = typeof payload?.noteType === "string" ? payload.noteType : "video";
 
       if (!markdown.trim()) {
