@@ -1,123 +1,205 @@
-YT → Obsidian Note (Transcript Fix + Summary)
+# YT Note Generator
 
-Browser extension (Chrome MV3) that pulls a YouTube video transcript, cleans it with OpenAI, generates a structured summary, and produces a Markdown note suitable for Obsidian. The note is copied to your clipboard and also available on a results page for easy copy.
+Generate Obsidian-ready notes from YouTube videos by combining transcript extraction + OpenAI cleanup/summarization.
 
-Features
-- Scrape YouTube title, channel, URL, and transcript
-- Clean/improve transcript (punctuation, capitalization, remove non‑speech tags)
-- Generate a 3–5 paragraph summary in concise Markdown
-- Assemble a Markdown note with date/time, channel, summary, transcript, and video link
-- One‑click copy to clipboard; fallback results page if clipboard access fails
-- Works on `www.youtube.com`, `m.youtube.com`, and `youtu.be`
-- Resilient architecture with Offscreen Document and Service Worker fallback
+---
 
-Web App (Windows 11 or any desktop browser)
-This repo includes a standalone web app that runs locally in your browser. It fetches a YouTube transcript, calls OpenAI to clean + summarize, and outputs a Markdown note you can copy into Obsidian.
+## What the project does today
 
-Quick start
-1. From this repo, start the local web app + transcript API server:
-   - `node server.js`
-2. Open `http://localhost:5173/` in your browser.
-3. Paste the YouTube URL, your OpenAI API key, and click “Generate Obsidian Note.”
+For each video, the app/extension:
 
-Notes
-- The API key is never stored; it is used only in memory for the current run.
-- Transcript fetching is asynchronous and uses Bright Data's YouTube dataset API only (trigger -> poll -> snapshot).
-- Bright Data credentials are loaded from `.env`; there is no local transcript-script fallback path.
-- Some videos (or regions) may still not expose captions.
+- Collects transcript text + basic metadata (title, channel, URL).
+- Cleans transcript text (punctuation/capitalization, removes noisy tags, translates non-English transcript text to English).
+- Generates a structured summary.
+- Builds a Markdown note in this format:
+  - Date/time
+  - Channel
+  - Summary
+  - Cleaned transcript
+  - Source video link
+  - `#VN` tag
 
-Permissions
-The extension requests:
-- activeTab, scripting: Inject/communicate with the content script to scrape the YouTube page
-- storage: Persist the most recent result and your model preference
-- clipboardWrite: Copy the final Markdown to clipboard
-- notifications: Notify when a background run completes
-- offscreen: Run long operations in an offscreen document without keeping the popup open
-- Host permissions for YouTube and https://api.openai.com/*
+---
 
-Requirements
-- A valid OpenAI API key with access to the chosen chat-completions model (default: gpt-4o-mini)
-- Bright Data dataset API credentials configured in `.env` (see `.env.example`)
+## Current architecture
 
-Bright Data (required)
-- Copy `.env.example` to `.env` and fill in your credentials.
-- Required values:
+### 1) Chrome extension flow
+
+- `contentScript.js`: Scrapes YouTube page data and transcript.
+- `service-worker.js`: Orchestrates the run, calls OpenAI, reports progress, manages offscreen fallback, and stores latest result.
+- `offscreen.js` (+ `offscreen.html`): Preferred long-running processor for cleanup/summarization.
+- `popup.js`/`popup.html`: API key entry and run UI.
+- `result.html`/`result.js`: Displays last generated note for manual copy/open-video fallback.
+
+### 2) Local web app flow
+
+- `server.js`: Serves `webapp/` static files and API routes.
+- `GET /api/transcript`: Pulls transcript data through Bright Data dataset API (trigger → poll → snapshot).
+- `POST /api/save-note`: Saves generated Markdown note to local disk.
+- `webapp/app.js`: Handles multi-video batch processing, OpenAI calls, progress cards, and copy UX.
+
+---
+
+## Requirements
+
+- Node.js 18+ (built-in `fetch` is used by `server.js`).
+- OpenAI API key.
+- Bright Data dataset API credentials for transcript retrieval in web app mode:
   - `BRIGHT_DATA_API_TOKEN`
   - `BRIGHT_DATA_YT_DATASET_ID`
-- Optional values:
-  - `BRIGHT_DATA_API_BASE` (default: `https://api.brightdata.com`)
-  - `BRIGHT_DATA_TIMEOUT_MS`
-  - `BRIGHT_DATA_POLL_INTERVAL_MS`
 
-Install (Developer/Unpacked)
-1. Clone or download this repository.
-2. Open Chrome → Extensions → Enable “Developer mode”.
-3. Click “Load unpacked” and select the project folder.
-4. Verify the extension appears in the toolbar (pin if desired).
+Optional Python helper dependency (legacy/utility script):
 
-Usage
-1. Open a YouTube video page (www, m, or youtu.be).
-2. Click the extension icon to open the popup.
-3. Paste your OpenAI API key (not stored; used in-memory for this run) and Continue.
-4. Click “Make Obsidian Note → Clipboard”.
-5. Watch progress in the popup. On completion:
-   - Markdown is copied to clipboard, and
-   - A notification appears. Clicking it opens the results page (also available if clipboard copy fails).
+- `yt-transcript-api` (listed in `requirements.txt` for `scripts/fetch_transcript.py`).
 
-Options
-- Open the extension’s Options page (right-click the extension → Options) to set the model name stored in chrome.storage.local.model (default: gpt-4o-mini).
+---
 
-Architecture Overview
-- service-worker.js: Orchestrates runs, manages badge spinner, notifications, offscreen lifecycle, and a full fallback path.
-- contentScript.js: Runs on YouTube pages; opens the transcript panel and scrapes title/channel/url/transcript.
-- offscreen.html + offscreen.js: Preferred long-running worker that calls OpenAI for cleaning and summarization, with heartbeat progress updates.
-- popup.html + popup.js: UI for API key entry, progress, and auto-copy.
-- result.html + result.js: Displays the most recent note and provides an “Open original video” link.
+## Setup
 
-Progress and Heartbeats
-- Real progress updates map to: scrape → clean → summarize → finalize.
-- During long OpenAI calls, periodic “still running” heartbeats are sent to keep the UI responsive and show activity.
-- The popup ignores heartbeat messages for the percentage bar/step fills to avoid jumpy progress, but keeps the status text updated.
+### 1) Configure environment
 
-Data Handling & Privacy
-- Your API key is typed into the popup and used only for the current run; it is not stored.
-- The latest note payload (title, channel, URL, date/time, Markdown) is saved to chrome.storage.local.lastResult for the results page.
-- The payload size is guarded and may be truncated if too large for storage limits.
+Copy and edit env file:
 
-Troubleshooting
-- Transcript not found: Some videos do not publish caption tracks (or region/account restrictions may block them). Try a different video or provide one with subtitles enabled.
-- Clipboard copy fails: The extension opens the results page for manual copy.
-- No progress / fallback used: The offscreen document may be slow to initialize; the extension falls back to running entirely in the Service Worker.
-- Rate limits / timeouts: The extension retries once with a short backoff for each OpenAI call. Extremely long transcripts are chunked for cleaning and the summary prompt input is capped.
+```bash
+cp .env.example .env
+```
 
-Known Limitations
-- YouTube DOM and labels can change by locale/layout; scraping is best‑effort.
-- Very long transcripts may be summarized from a capped cleaned text subset.
-- Service Worker long tasks depend on Chrome heuristics; the offscreen path is preferred.
+Set required values:
 
-Development
-- Manifest V3; all scripts must be external (no inline JS).
-- Primary files:
-  - manifest.json
-  - service-worker.js
-  - contentScript.js
-  - offscreen.html, offscreen.js
-  - popup.html, popup.js
-  - result.html, result.js
-  - options.html, options.js
-- Logging: The popup throttles repeated progress messages and ignores heartbeats for percentage/steps.
+```env
+BRIGHT_DATA_API_TOKEN=...
+BRIGHT_DATA_YT_DATASET_ID=...
+```
 
-Security Notes
-- The API key is never persisted; use short‑lived or restricted keys when possible.
-- All network calls to OpenAI are sent directly from the extension to https://api.openai.com/v1/chat/completions.
+Optional overrides supported by the server:
 
-License
-MIT (see LICENSE if provided). If no license is present, all rights reserved by the author.
+- `PORT` (default `5173`)
+- `BRIGHT_DATA_API_BASE` (default `https://api.brightdata.com`)
+- `BRIGHT_DATA_TIMEOUT_MS` (default `60000`)
+- `BRIGHT_DATA_POLL_INTERVAL_MS` (default `2000`)
 
-Changelog (highlights)
-- v1.3.x:
-  - Offscreen detection improved; longer handshake window
-  - Fallback heartbeat + retry/backoff
-  - Summary input cap; storage size guard
-  - Popup URL gating for m.youtube.com and youtu.be
-  - Popup progress smoothing; results page link to original video
+### 2) (Important) Adjust note-save location for web app mode
+
+`server.js` currently writes saved notes to a hardcoded directory:
+
+```js
+const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
+```
+
+Update this constant to a valid folder on your machine before relying on `/api/save-note`.
+
+---
+
+## Run the local web app
+
+Start server:
+
+```bash
+node server.js
+```
+
+Open:
+
+- `http://localhost:5173/`
+
+Usage:
+
+1. Paste one or more YouTube URLs (spaces/newlines/comma separated).
+2. Enter your OpenAI API key (used in-memory for that run).
+3. Choose model (default `gpt-4o-mini`; GPT-5 family routes through the Responses API path in the web app).
+4. Click **Generate Obsidian Note**.
+5. Copy combined markdown output and/or use saved files from the configured note directory.
+
+---
+
+## Install/run the Chrome extension
+
+1. Open Chrome → `chrome://extensions`
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select this repo directory.
+4. Open a YouTube video page.
+5. Click extension icon and run note generation.
+
+Notes:
+
+- Host permissions include `www.youtube.com`, `m.youtube.com`, and `youtu.be`.
+- Extension stores latest generated payload in `chrome.storage.local.lastResult` for the result page.
+- Model preference is saved in `chrome.storage.local.model` via `options.html`.
+
+---
+
+## API endpoints (local server)
+
+### `GET /api/transcript?url=<youtube_url>`
+
+- Resolves video id from URL.
+- Calls Bright Data dataset API.
+- Returns transcript + metadata.
+
+### `POST /api/save-note`
+
+Request JSON:
+
+```json
+{
+  "markdown": "# ...",
+  "videoTitle": "Video title"
+}
+```
+
+- Sanitizes filename from title.
+- Writes `.md` file into configured `OBSIDIAN_NOTE_DIR`.
+
+---
+
+## Privacy & data handling
+
+- OpenAI key is provided at runtime and not intentionally persisted by the extension/web app workflow.
+- Web app keeps model preference in browser `localStorage`.
+- Extension stores only result payload/model preference in `chrome.storage.local` for UX continuity.
+- Transcript retrieval in server mode depends on Bright Data API credentials from `.env`.
+
+---
+
+## Troubleshooting
+
+- **`Transcript fetch failed` in web app**
+  - Confirm Bright Data env vars are set and valid.
+  - Check dataset id/token permissions.
+  - Retry with a different video (some videos do not expose usable captions).
+
+- **`Save API error` in web app**
+  - Update `OBSIDIAN_NOTE_DIR` to a writable path for your system.
+
+- **OpenAI timeout/rate-limit issues**
+  - The app retries cleanup/summary calls once.
+  - Very large transcripts are chunked for cleanup.
+
+- **Extension cannot scrape transcript**
+  - Ensure you are on a supported YouTube URL and transcript is available.
+  - Reload extension after updates and retry.
+
+---
+
+## Repository map
+
+- `manifest.json` – extension manifest (MV3)
+- `service-worker.js` – extension orchestration/fallback logic
+- `contentScript.js` – YouTube scraping logic
+- `offscreen.html` / `offscreen.js` – offscreen processing path
+- `popup.*`, `result.*`, `options.*` – extension UI surfaces
+- `server.js` – local server + API
+- `webapp/` – local web app UI
+- `scripts/fetch_transcript.py` – optional Python transcript utility
+
+---
+
+## Version
+
+- `VERSION` file: `1.0`
+
+---
+
+## License
+
+MIT (if a LICENSE file is present).
