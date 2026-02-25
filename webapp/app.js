@@ -3,11 +3,16 @@ const statusEl = el("statusSmall");
 const progressContainer = el("progressContainer");
 const resultEl = el("result");
 const copyBtn = el("copy");
-const openVideo = el("openVideo");
+const openSource = el("openSource");
 const inputErr = el("inputErr");
 const copyStatus = el("copyStatus");
 
 const STORAGE_KEY = "yt_obsidian_webapp_model";
+const WIKI_STORAGE_KEY = "yt_obsidian_webapp_wiki_model";
+
+const selectedWikiTerms = [];
+let wikiSuggestionTimer = null;
+let activeTab = "youtube";
 
 function pad2(n) { return n < 10 ? `0${n}` : `${n}`; }
 function nowDateTimeStrings() {
@@ -17,7 +22,7 @@ function nowDateTimeStrings() {
   return { date, time };
 }
 
-function buildNoteMarkdown({ date, time, channel, summary, fixedTranscript, videoUrl }) {
+function buildVideoNoteMarkdown({ date, time, channel, summary, fixedTranscript, videoUrl }) {
   return [
     `#### ${date}  ${time}`,
     "",
@@ -36,6 +41,24 @@ function buildNoteMarkdown({ date, time, channel, summary, fixedTranscript, vide
     videoUrl || "",
     "",
     "#VN"
+  ].join("\n");
+}
+
+function buildDictionaryMarkdown({ date, time, summary }) {
+  const body = (summary || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+
+  return [
+    "---",
+    "aliases:",
+    "---",
+    "",
+    `#### ${date}  ${time}`,
+    "",
+    `- ${body}`
   ].join("\n");
 }
 
@@ -64,12 +87,12 @@ function withTimeout(promiseFactory, ms, label = "operation") {
     });
 }
 
-function createProgressPanel(videoUrl, index) {
+function createProgressPanel(itemLabel, index) {
   const card = document.createElement("article");
   card.className = "panel video-progress-card";
   card.innerHTML = `
     <div class="panel-header">
-      <h3>Video ${index + 1}</h3>
+      <h3>Item ${index + 1}</h3>
       <span class="badge soft">Queued</span>
     </div>
     <div class="stepper">
@@ -87,12 +110,12 @@ function createProgressPanel(videoUrl, index) {
     <div class="log" aria-live="polite"></div>
   `;
 
-  const videoUrlEl = document.createElement("p");
-  videoUrlEl.className = "muted video-url";
-  videoUrlEl.title = videoUrl;
-  videoUrlEl.textContent = videoUrl;
+  const itemLabelEl = document.createElement("p");
+  itemLabelEl.className = "muted video-url";
+  itemLabelEl.title = itemLabel;
+  itemLabelEl.textContent = itemLabel;
   const stepperEl = card.querySelector(".stepper");
-  card.insertBefore(videoUrlEl, stepperEl);
+  card.insertBefore(itemLabelEl, stepperEl);
 
   progressContainer.appendChild(card);
 
@@ -137,7 +160,7 @@ function resetUi() {
   resultEl.value = "";
   copyBtn.disabled = true;
   copyStatus.textContent = "";
-  openVideo.href = "#";
+  openSource.href = "#";
 }
 
 function parseVideoUrls(rawInput) {
@@ -168,13 +191,29 @@ async function fetchTranscriptFromServer(videoUrl) {
   };
 }
 
-async function saveNoteToServer({ markdown, videoTitle }) {
+async function fetchWikipediaSuggestions(query) {
+  const resp = await fetch(`/api/wikipedia-suggest?q=${encodeURIComponent(query)}`);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  return Array.isArray(data?.suggestions) ? data.suggestions : [];
+}
+
+async function fetchWikipediaPage(term) {
+  const resp = await fetch(`/api/wikipedia-page?title=${encodeURIComponent(term)}`);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Wikipedia API error: ${resp.status} ${text}`);
+  }
+  return resp.json();
+}
+
+async function saveNoteToServer({ markdown, noteTitle, noteType }) {
   const resp = await fetch("/api/save-note", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ markdown, videoTitle })
+    body: JSON.stringify({ markdown, noteTitle, noteType })
   });
 
   if (!resp.ok) {
@@ -366,7 +405,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   summary = (summary || "").trim();
 
   const { date, time } = nowDateTimeStrings();
-  const markdown = buildNoteMarkdown({
+  const markdown = buildVideoNoteMarkdown({
     date,
     time,
     channel: meta.channel,
@@ -380,7 +419,8 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   try {
     saveResult = await saveNoteToServer({
       markdown,
-      videoTitle: meta.title
+      noteTitle: meta.title,
+      noteType: "video"
     });
     panel.appendLog(`Saved note: ${saveResult.fileName}`);
   } catch (saveErr) {
@@ -389,7 +429,148 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   }
 
   panel.setProgress("Done", 100, "Note ready");
-  return { markdown, videoUrl: meta.url || videoUrl, saveResult, title: meta.title };
+  return { markdown, sourceUrl: meta.url || videoUrl, saveResult, title: meta.title };
+}
+
+async function processWikipediaTerm({ apiKey, model, term, panel }) {
+  panel.setProgress("Loading Wikipedia article", 15);
+  const wikiData = await fetchWikipediaPage(term);
+  const articleTitle = wikiData?.title || term;
+  const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
+  const extract = wikiData?.extract || "";
+
+  if (!extract.trim()) {
+    throw new Error("Wikipedia article content was empty.");
+  }
+
+  panel.appendLog(`Fetched Wikipedia article: ${articleTitle}`);
+  panel.setProgress("Summarizing article", 65, "Dictionary note format");
+
+  const summaryMessages = [
+    { role: "system", content: "You are a concise research assistant writing Obsidian dictionary notes." },
+    {
+      role: "user",
+      content:
+        `Summarize the following Wikipedia article in 4-7 clear sentences focused on key facts, definitions, and why it matters. Write in plain Markdown text with no heading.\n\nArticle title: ${articleTitle}\n\nARTICLE TEXT:\n${extract.slice(0, 180000)}`
+    }
+  ];
+
+  const hb = startHeartbeat(panel, "Summarizing article");
+  let summary = "";
+  try {
+    summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (wikipedia summary)");
+  } finally {
+    stopHeartbeat(hb);
+  }
+
+  const { date, time } = nowDateTimeStrings();
+  const markdown = buildDictionaryMarkdown({ date, time, summary: (summary || "").trim() });
+
+  panel.setProgress("Saving note file…", 92);
+  let saveResult = null;
+  try {
+    saveResult = await saveNoteToServer({
+      markdown,
+      noteTitle: articleTitle,
+      noteType: "dictionary"
+    });
+    panel.appendLog(`Saved note: ${saveResult.fileName}`);
+  } catch (saveErr) {
+    panel.appendLog(`Note save failed: ${saveErr?.message || "Unknown save error"}`);
+  }
+
+  panel.setProgress("Done", 100, "Dictionary note ready");
+  return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle };
+}
+
+function renderSelectedWikiTerms() {
+  const holder = el("wikiSelectedTerms");
+  holder.innerHTML = "";
+
+  selectedWikiTerms.forEach((term) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = term;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "chip-remove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", `Remove ${term}`);
+    removeBtn.addEventListener("click", () => {
+      const idx = selectedWikiTerms.indexOf(term);
+      if (idx >= 0) selectedWikiTerms.splice(idx, 1);
+      renderSelectedWikiTerms();
+    });
+
+    chip.appendChild(removeBtn);
+    holder.appendChild(chip);
+  });
+}
+
+function addWikiTerm(term) {
+  const normalized = (term || "").trim();
+  if (!normalized) return;
+  if (selectedWikiTerms.some((entry) => entry.toLowerCase() === normalized.toLowerCase())) return;
+  selectedWikiTerms.push(normalized);
+  renderSelectedWikiTerms();
+}
+
+function clearWikiSuggestions() {
+  el("wikiSuggestionList").innerHTML = "";
+}
+
+function renderWikiSuggestions(suggestions) {
+  const listEl = el("wikiSuggestionList");
+  listEl.innerHTML = "";
+
+  suggestions.forEach((suggestion) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "suggestion-item";
+    btn.setAttribute("role", "option");
+    btn.innerHTML = `
+      <div class="suggestion-title">${suggestion.title}</div>
+      <div class="suggestion-description">${suggestion.description || "Wikipedia article"}</div>
+    `;
+    btn.addEventListener("click", () => {
+      addWikiTerm(suggestion.title);
+      el("wikiTermInput").value = "";
+      clearWikiSuggestions();
+      el("wikiTermInput").focus();
+    });
+    listEl.appendChild(btn);
+  });
+}
+
+async function updateWikiSuggestions() {
+  const query = el("wikiTermInput").value.trim();
+  if (query.length < 2) {
+    clearWikiSuggestions();
+    return;
+  }
+
+  try {
+    const suggestions = await fetchWikipediaSuggestions(query);
+    renderWikiSuggestions(suggestions.slice(0, 8));
+  } catch {
+    clearWikiSuggestions();
+  }
+}
+
+function setActiveTab(tabName) {
+  activeTab = tabName;
+  const isYoutube = tabName === "youtube";
+
+  el("tabYoutube").classList.toggle("active", isYoutube);
+  el("tabWikipedia").classList.toggle("active", !isYoutube);
+  el("tabYoutube").setAttribute("aria-selected", isYoutube ? "true" : "false");
+  el("tabWikipedia").setAttribute("aria-selected", isYoutube ? "false" : "true");
+
+  el("panelYoutube").classList.toggle("active", isYoutube);
+  el("panelWikipedia").classList.toggle("active", !isYoutube);
+  el("panelYoutube").hidden = !isYoutube;
+  el("panelWikipedia").hidden = isYoutube;
 }
 
 async function copyTextareaValue(textareaEl) {
@@ -412,7 +593,7 @@ async function copyTextareaValue(textareaEl) {
   }
 }
 
-async function run() {
+async function runYoutube() {
   inputErr.textContent = "";
   resetUi();
 
@@ -434,7 +615,7 @@ async function run() {
   }
 
   localStorage.setItem(STORAGE_KEY, model);
-  openVideo.href = videoUrls[0];
+  openSource.href = videoUrls[0];
   statusEl.textContent = `Running ${videoUrls.length} video${videoUrls.length === 1 ? "" : "s"}`;
 
   const panels = videoUrls.map((videoUrl, index) => ({
@@ -446,6 +627,44 @@ async function run() {
     panels.map(({ videoUrl, panel }) => processVideo({ apiKey, model, videoUrl, panel }))
   );
 
+  finalizeRunResults(results, panels, "video");
+}
+
+async function runWikipedia() {
+  inputErr.textContent = "";
+  resetUi();
+
+  const apiKey = el("wikiApiKey").value.trim();
+  const model = el("wikiModel").value.trim() || "gpt-4o-mini";
+  const terms = [...selectedWikiTerms];
+
+  if (!apiKey) {
+    inputErr.textContent = "Please enter your OpenAI API key.";
+    return;
+  }
+
+  if (!terms.length) {
+    inputErr.textContent = "Please add at least one Wikipedia term.";
+    return;
+  }
+
+  localStorage.setItem(WIKI_STORAGE_KEY, model);
+  statusEl.textContent = `Running ${terms.length} term${terms.length === 1 ? "" : "s"}`;
+  openSource.href = `https://en.wikipedia.org/wiki/${encodeURIComponent(terms[0].replace(/\s+/g, "_"))}`;
+
+  const panels = terms.map((term, index) => ({
+    term,
+    panel: createProgressPanel(term, index)
+  }));
+
+  const results = await Promise.allSettled(
+    panels.map(({ term, panel }) => processWikipediaTerm({ apiKey, model, term, panel }))
+  );
+
+  finalizeRunResults(results, panels, "wiki");
+}
+
+function finalizeRunResults(results, panels, mode) {
   const successful = [];
   let failed = 0;
 
@@ -459,17 +678,19 @@ async function run() {
   });
 
   if (!successful.length) {
-    inputErr.textContent = "All videos failed. Check the progress panels for details.";
+    inputErr.textContent = "All items failed. Check the progress panels for details.";
     statusEl.textContent = "Done (with errors)";
     return;
   }
 
+  const label = mode === "wiki" ? "Term" : "Video";
   const output = successful
-    .map((item, idx) => `# Video ${idx + 1}: ${item.title || item.videoUrl}\n\n${item.markdown}`)
+    .map((item, idx) => `# ${label} ${idx + 1}: ${item.title || item.sourceUrl}\n\n${item.markdown}`)
     .join("\n\n---\n\n");
 
   resultEl.value = output;
   copyBtn.disabled = false;
+  if (successful[0]?.sourceUrl) openSource.href = successful[0].sourceUrl;
   statusEl.textContent = failed ? `Done (${successful.length} succeeded, ${failed} failed)` : `Done (${successful.length} succeeded)`;
 
   const allSaved = successful.every((item) => item.saveResult);
@@ -488,9 +709,41 @@ copyBtn.addEventListener("click", async () => {
   }
 });
 
-el("run").addEventListener("click", run);
+el("run").addEventListener("click", runYoutube);
+el("runWikipedia").addEventListener("click", runWikipedia);
+
+el("tabYoutube").addEventListener("click", () => setActiveTab("youtube"));
+el("tabWikipedia").addEventListener("click", () => setActiveTab("wikipedia"));
+
+el("wikiTermInput").addEventListener("input", () => {
+  clearTimeout(wikiSuggestionTimer);
+  wikiSuggestionTimer = setTimeout(updateWikiSuggestions, 220);
+});
+
+el("wikiTermInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === ",") {
+    event.preventDefault();
+    addWikiTerm(el("wikiTermInput").value);
+    el("wikiTermInput").value = "";
+    clearWikiSuggestions();
+  }
+  if (event.key === "Backspace" && !el("wikiTermInput").value && selectedWikiTerms.length) {
+    selectedWikiTerms.pop();
+    renderSelectedWikiTerms();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  const multiselect = el("wikiMultiSelect");
+  if (!multiselect.contains(event.target)) {
+    clearWikiSuggestions();
+  }
+});
 
 window.addEventListener("load", () => {
   const savedModel = localStorage.getItem(STORAGE_KEY);
+  const savedWikiModel = localStorage.getItem(WIKI_STORAGE_KEY);
   if (savedModel) el("model").value = savedModel;
+  if (savedWikiModel) el("wikiModel").value = savedWikiModel;
+  setActiveTab(activeTab);
 });

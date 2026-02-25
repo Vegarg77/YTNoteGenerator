@@ -24,18 +24,47 @@
       <main class="layout">
         <section class="panel">
           <h2>Start a new note</h2>
-          <p class="muted">Paste one or more YouTube URLs (new lines or spaces), add your OpenAI API key, and generate ready-to-copy Obsidian notes.</p>
 
-          <label for="videoUrl">YouTube URL(s)</label>
-          <textarea id="videoUrl" rows="4" placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\n..."></textarea>
+          <div class="tab-row" role="tablist" aria-label="Note source">
+            <button id="tabYoutube" type="button" class="btn ghost tab-btn active" role="tab" aria-selected="true">YouTube</button>
+            <button id="tabWikipedia" type="button" class="btn ghost tab-btn" role="tab" aria-selected="false">Wikipedia</button>
+          </div>
 
-          <label for="apiKey">OpenAI API key (not saved)</label>
-          <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+          <div id="panelYoutube" class="tab-panel active" role="tabpanel" aria-labelledby="tabYoutube">
+            <p class="muted">Paste one or more YouTube URLs (new lines or spaces), add your OpenAI API key, and generate ready-to-copy Obsidian notes.</p>
 
-          <label for="model">Model</label>
-          <input id="model" type="text" value="gpt-4o-mini" />
+            <label for="videoUrl">YouTube URL(s)</label>
+            <textarea id="videoUrl" rows="4" placeholder="https://www.youtube.com/watch?v=...\nhttps://youtu.be/...\n..."></textarea>
 
-          <button id="run" class="btn primary">Generate Obsidian Note</button>
+            <label for="apiKey">OpenAI API key (not saved)</label>
+            <input id="apiKey" type="password" placeholder="sk-..." autocomplete="off" />
+
+            <label for="model">Model</label>
+            <input id="model" type="text" value="gpt-4o-mini" />
+
+            <button id="run" class="btn primary">Generate Obsidian Note</button>
+          </div>
+
+          <div id="panelWikipedia" class="tab-panel" role="tabpanel" aria-labelledby="tabWikipedia" hidden>
+            <p class="muted">Search Wikipedia terms, pick one or more entries, and generate dictionary notes using your template.</p>
+
+            <label for="wikiApiKey">OpenAI API key (not saved)</label>
+            <input id="wikiApiKey" type="password" placeholder="sk-..." autocomplete="off" />
+
+            <label for="wikiModel">Model</label>
+            <input id="wikiModel" type="text" value="gpt-4o-mini" />
+
+            <label for="wikiTermInput">Wikipedia term(s)</label>
+            <div class="multiselect" id="wikiMultiSelect">
+              <div id="wikiSelectedTerms" class="chip-row" aria-live="polite"></div>
+              <input id="wikiTermInput" type="text" placeholder="Start typing a term (e.g., Photosynthesis)" autocomplete="off" />
+              <div id="wikiSuggestionList" class="suggestion-list" role="listbox"></div>
+            </div>
+            <p class="muted">Tip: Press Enter to add your typed term, or click a suggestion from Wikipedia.</p>
+
+            <button id="runWikipedia" class="btn primary">Generate Dictionary Note</button>
+          </div>
+
           <div id="inputErr" class="err"></div>
           <div class="batch-status-row">
             <span class="muted">Batch status</span>
@@ -55,7 +84,7 @@
             <h2>Obsidian notes</h2>
             <div class="actions">
               <button id="copy" class="btn ghost" disabled>Copy Markdown</button>
-              <a id="openVideo" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open first video</a>
+              <a id="openSource" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open first source</a>
             </div>
           </div>
           <textarea id="result" rows="16" placeholder="Generated notes will appear here..."></textarea>

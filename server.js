@@ -29,6 +29,7 @@ loadDotenv();
 const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
+const OBSIDIAN_DICTIONARY_DIR = "G:\\My Drive\\GigaVault\\Dictionary";
 
 const BRIGHT_DATA_API_TOKEN = (process.env.BRIGHT_DATA_API_TOKEN || "").trim();
 const BRIGHT_DATA_YT_DATASET_ID = (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim();
@@ -125,6 +126,15 @@ async function fetchJson(url, { method = "GET", headers = {}, body, signal } = {
   } catch {
     throw new Error(`Bright Data API ${method} ${url} returned non-JSON body`);
   }
+}
+
+async function fetchText(url, { method = "GET", headers = {}, signal } = {}) {
+  const resp = await fetch(url, { method, headers, signal });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`${method} ${url} failed (${resp.status}): ${text || resp.statusText}`);
+  }
+  return resp.text();
 }
 
 function parseBrightDataTriggerResponse(payload) {
@@ -359,6 +369,39 @@ function serveStatic(req, res) {
   });
 }
 
+async function getWikipediaSuggestions(query, signal) {
+  const suggestionUrl =
+    `https://en.wikipedia.org/w/api.php?action=opensearch&limit=10&namespace=0&format=json&search=${encodeURIComponent(query)}`;
+  const rawText = await fetchText(suggestionUrl, { signal });
+  const payload = JSON.parse(rawText || "[]");
+  const titles = Array.isArray(payload?.[1]) ? payload[1] : [];
+  const descriptions = Array.isArray(payload?.[2]) ? payload[2] : [];
+  const urls = Array.isArray(payload?.[3]) ? payload[3] : [];
+
+  return titles.map((title, idx) => ({
+    title: asTrimmedString(title),
+    description: asTrimmedString(descriptions[idx]),
+    url: asTrimmedString(urls[idx])
+  })).filter((entry) => entry.title);
+}
+
+async function getWikipediaPage(title, signal) {
+  const pageUrl =
+    `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&format=json&formatversion=2&redirects=1&explaintext=1&titles=${encodeURIComponent(title)}`;
+  const rawText = await fetchText(pageUrl, { signal });
+  const payload = JSON.parse(rawText || "{}");
+  const page = payload?.query?.pages?.[0] || {};
+  const resolvedTitle = asTrimmedString(page?.title) || title;
+  const extract = asTrimmedString(page?.extract);
+  const urlTitle = resolvedTitle.replace(/\s+/g, "_");
+
+  return {
+    title: resolvedTitle,
+    extract,
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (url.pathname === "/api/transcript") {
@@ -406,17 +449,19 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readJsonBody(req);
       const markdown = typeof payload?.markdown === "string" ? payload.markdown : "";
-      const videoTitle = typeof payload?.videoTitle === "string" ? payload.videoTitle : "";
+      const noteTitle = typeof payload?.noteTitle === "string" ? payload.noteTitle : "";
+      const noteType = typeof payload?.noteType === "string" ? payload.noteType : "video";
 
       if (!markdown.trim()) {
         sendText(res, 400, "Missing markdown content");
         return;
       }
 
-      const fileName = sanitizeObsidianFileName(videoTitle);
-      const filePath = path.join(OBSIDIAN_NOTE_DIR, fileName);
+      const destinationDir = noteType === "dictionary" ? OBSIDIAN_DICTIONARY_DIR : OBSIDIAN_NOTE_DIR;
+      const fileName = sanitizeObsidianFileName(noteTitle);
+      const filePath = path.join(destinationDir, fileName);
 
-      await fs.promises.mkdir(OBSIDIAN_NOTE_DIR, { recursive: true });
+      await fs.promises.mkdir(destinationDir, { recursive: true });
       await fs.promises.writeFile(filePath, markdown, "utf8");
 
       sendJson(res, 200, {
@@ -426,6 +471,56 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (err) {
       sendText(res, 500, `Failed to save note: ${err.message}`);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/wikipedia-suggest") {
+    if (req.method !== "GET") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+
+    const query = asTrimmedString(url.searchParams.get("q"));
+    if (query.length < 2) {
+      sendJson(res, 200, { suggestions: [] });
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    try {
+      const suggestions = await getWikipediaSuggestions(query, ctrl.signal);
+      sendJson(res, 200, { suggestions });
+    } catch (err) {
+      sendText(res, 502, `Wikipedia suggestions failed: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/wikipedia-page") {
+    if (req.method !== "GET") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+
+    const title = asTrimmedString(url.searchParams.get("title"));
+    if (!title) {
+      sendText(res, 400, "Missing title query param");
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const page = await getWikipediaPage(title, ctrl.signal);
+      sendJson(res, 200, page);
+    } catch (err) {
+      sendText(res, 502, `Wikipedia page lookup failed: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
     }
     return;
   }
