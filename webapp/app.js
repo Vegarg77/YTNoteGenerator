@@ -44,22 +44,39 @@ function buildVideoNoteMarkdown({ date, time, channel, summary, fixedTranscript,
   ].join("\n");
 }
 
-function buildDictionaryMarkdown({ date, time, summary }) {
-  const body = (summary || "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" ");
+function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) {
+  const body = (structuredContent || "").trim();
 
   return [
     "---",
-    "aliases:",
+    "aliases: []",
     "---",
     "",
-    `#### ${date}  ${time}`,
+    `date_created: ${date}`,
     "",
-    `- ${body}`
+    `# ${title || "Untitled"}`,
+    "",
+    body || "No article details were generated.",
+    "",
+    "---",
+    "",
+    "## 10. References",
+    sourceUrl ? `- ${sourceUrl}` : "- https://en.wikipedia.org/"
   ].join("\n");
+}
+
+
+function normalizeDictionaryContent(content) {
+  let text = (content || "").trim();
+  if (!text) return "";
+
+  const firstSection = text.search(/^##\s*1\.\s*Definition\b/im);
+  if (firstSection > 0) text = text.slice(firstSection).trim();
+
+  const refsSection = text.search(/^##\s*10\.\s*References\b/im);
+  if (refsSection >= 0) text = text.slice(0, refsSection).trim();
+
+  return text;
 }
 
 function splitIntoChunks(text, maxLen = 12000) {
@@ -447,24 +464,58 @@ async function processWikipediaTerm({ apiKey, model, term, panel }) {
   panel.setProgress("Summarizing article", 65, "Dictionary note format");
 
   const summaryMessages = [
-    { role: "system", content: "You are a concise research assistant writing Obsidian dictionary notes." },
+    {
+      role: "system",
+      content: "You are a precise research assistant that fills structured Obsidian templates from source text only."
+    },
     {
       role: "user",
       content:
-        `Summarize the following Wikipedia article in 4-7 clear sentences focused on key facts, definitions, and why it matters. Write in plain Markdown text with no heading.\n\nArticle title: ${articleTitle}\n\nARTICLE TEXT:\n${extract.slice(0, 180000)}`
+        `Populate this dictionary-note template using ONLY the provided Wikipedia article text.
+
+Rules:
+- Return Markdown for sections 1 through 9 only (do not include YAML, date_created, title, or section 10 References).
+- Use these exact headings and order:
+  ## 1. Definition
+  ## 2. Overview
+  ## 3. Core Characteristics
+  ## 4. Structure or Mechanism
+  ## 5. Context & Classification
+  ## 6. Relationships
+  ## 7. Applications / Impact
+  ## 8. Key Data
+  ## 9. Timeline (If Relevant)
+- Follow this formatting exactly:
+  - Section 3 must be bullet points beginning with "- Key property:".
+  - Section 5 must include bullets for Field / Domain, Broader category, Time period (if applicable), Governing framework or standard (if applicable).
+  - Section 6 must include bullets for Parent concept, Subtypes, Related topics, Influenced / Impacted, then a "Use wiki-links:" line with at least two wiki-links like [[Example]].
+  - Section 9 must include a Markdown table with header: | Date | Event |
+- Be in-depth, not a single paragraph. Target 700-1400 words total.
+- If a detail is unavailable in the article, write "Not clearly stated in source." for that item.
+- Neutral factual tone. No speculation.
+
+Article title: ${articleTitle}
+
+ARTICLE TEXT:
+${extract.slice(0, 180000)}`
     }
   ];
 
   const hb = startHeartbeat(panel, "Summarizing article");
-  let summary = "";
+  let structuredContent = "";
   try {
-    summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (wikipedia summary)");
+    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
   } finally {
     stopHeartbeat(hb);
   }
 
-  const { date, time } = nowDateTimeStrings();
-  const markdown = buildDictionaryMarkdown({ date, time, summary: (summary || "").trim() });
+  const { date } = nowDateTimeStrings();
+  const markdown = buildDictionaryMarkdown({
+    date,
+    title: articleTitle,
+    structuredContent: normalizeDictionaryContent(structuredContent),
+    sourceUrl: articleUrl
+  });
 
   panel.setProgress("Saving note file…", 92);
   let saveResult = null;
