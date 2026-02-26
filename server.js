@@ -74,6 +74,25 @@ function sanitizeObsidianFileName(rawTitle) {
   return (base || fallback) + ".md";
 }
 
+async function resolveUniqueFilePath(directory, preferredFileName) {
+  const parsed = path.parse(preferredFileName);
+  const baseName = parsed.name || "Untitled Video Note";
+  const extension = parsed.ext || ".md";
+
+  let candidate = path.join(directory, `${baseName}${extension}`);
+  let suffix = 2;
+
+  while (true) {
+    try {
+      await fs.promises.access(candidate, fs.constants.F_OK);
+      candidate = path.join(directory, `${baseName} (${suffix})${extension}`);
+      suffix += 1;
+    } catch {
+      return candidate;
+    }
+  }
+}
+
 async function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -461,14 +480,14 @@ const server = http.createServer(async (req, res) => {
 
       const destinationDir = noteType === "dictionary" ? OBSIDIAN_DICTIONARY_DIR : OBSIDIAN_NOTE_DIR;
       const fileName = sanitizeObsidianFileName(noteTitle);
-      const filePath = path.join(destinationDir, fileName);
 
       await fs.promises.mkdir(destinationDir, { recursive: true });
+      const filePath = await resolveUniqueFilePath(destinationDir, fileName);
       await fs.promises.writeFile(filePath, markdown, "utf8");
 
       sendJson(res, 200, {
         saved: true,
-        fileName,
+        fileName: path.basename(filePath),
         filePath
       });
     } catch (err) {
