@@ -52,7 +52,7 @@ function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) 
     "aliases: []",
     "---",
     "",
-    `date_created: ${date}`,
+    `#### ${date}`,
     "",
     `# ${title || "Untitled"}`,
     "",
@@ -60,7 +60,7 @@ function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) 
     "",
     "---",
     "",
-    "## 10. References",
+    "## References",
     sourceUrl ? `- ${sourceUrl}` : "- https://en.wikipedia.org/"
   ].join("\n");
 }
@@ -70,10 +70,10 @@ function normalizeDictionaryContent(content) {
   let text = (content || "").trim();
   if (!text) return "";
 
-  const firstSection = text.search(/^##\s*1\.\s*Definition\b/im);
+  const firstSection = text.search(/^##\s*Summary\b/im);
   if (firstSection > 0) text = text.slice(firstSection).trim();
 
-  const refsSection = text.search(/^##\s*10\.\s*References\b/im);
+  const refsSection = text.search(/^##\s*References\b/im);
   if (refsSection >= 0) text = text.slice(0, refsSection).trim();
 
   return text;
@@ -474,24 +474,19 @@ async function processWikipediaTerm({ apiKey, model, term, panel }) {
         `Populate this dictionary-note template using ONLY the provided Wikipedia article text.
 
 Rules:
-- Return Markdown for sections 1 through 9 only (do not include YAML, date_created, title, or section 10 References).
-- Use these exact headings and order:
-  ## 1. Definition
-  ## 2. Overview
-  ## 3. Core Characteristics
-  ## 4. Structure or Mechanism
-  ## 5. Context & Classification
-  ## 6. Relationships
-  ## 7. Applications / Impact
-  ## 8. Key Data
-  ## 9. Timeline (If Relevant)
-- Follow this formatting exactly:
-  - Section 3 must be bullet points beginning with "- Key property:".
-  - Section 5 must include bullets for Field / Domain, Broader category, Time period (if applicable), Governing framework or standard (if applicable).
-  - Section 6 must include bullets for Parent concept, Subtypes, Related topics, Influenced / Impacted, then a "Use wiki-links:" line with at least two wiki-links like [[Example]].
-  - Section 9 must include a Markdown table with header: | Date | Event |
-- Be in-depth, not a single paragraph. Target 700-1400 words total.
-- If a detail is unavailable in the article, write "Not clearly stated in source." for that item.
+- Return Markdown for these sections only (do not include YAML, date_created line, title, or References):
+  ## Summary
+  ## Key Points
+  ## Details
+  ## Context
+  ## Applications / Impact
+  ## Key Data (If Relevant)
+  ## Timeline (If Relevant)
+- Keep this exact heading order.
+- Use 2-5 sentences in Summary.
+- Use bullet points in Key Points.
+- Timeline must include a Markdown table with this header row exactly: | Date | Event |
+- If details are missing from the source, write "Not clearly stated in source." where needed.
 - Neutral factual tone. No speculation.
 
 Article title: ${articleTitle}
