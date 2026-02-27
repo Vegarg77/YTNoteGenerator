@@ -62,7 +62,15 @@
             </div>
             <p class="muted">Tip: Press Enter to add your typed term, or click a suggestion from Wikipedia.</p>
 
-            <button id="runWikipedia" class="btn primary">Generate Dictionary Note</button>
+            <label for="wikiBusinessInput">Businesses/Organizations</label>
+            <div class="multiselect" id="wikiBusinessMultiSelect">
+              <div id="wikiSelectedBusinesses" class="chip-row" aria-live="polite"></div>
+              <input id="wikiBusinessInput" type="text" placeholder="Start typing a business (e.g., OpenAI)" autocomplete="off" />
+              <div id="wikiBusinessSuggestionList" class="suggestion-list" role="listbox"></div>
+            </div>
+            <p class="muted">Tip: Press Enter to add your typed business, or click a suggestion from Wikipedia.</p>
+
+            <button id="runWikipedia" class="btn primary">Generate Wikipedia Notes</button>
           </div>
 
           <div id="inputErr" class="err"></div>

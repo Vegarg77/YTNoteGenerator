@@ -30,6 +30,7 @@ const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
 const OBSIDIAN_DICTIONARY_DIR = OBSIDIAN_NOTE_DIR;
+const OBSIDIAN_BUSINESS_DIR = OBSIDIAN_NOTE_DIR;
 
 const BRIGHT_DATA_API_TOKEN = (process.env.BRIGHT_DATA_API_TOKEN || "").trim();
 const BRIGHT_DATA_YT_DATASET_ID = (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim();
@@ -478,7 +479,11 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const destinationDir = noteType === "dictionary" ? OBSIDIAN_DICTIONARY_DIR : OBSIDIAN_NOTE_DIR;
+      const destinationDir = noteType === "dictionary"
+        ? OBSIDIAN_DICTIONARY_DIR
+        : noteType === "business"
+          ? OBSIDIAN_BUSINESS_DIR
+          : OBSIDIAN_NOTE_DIR;
       const fileName = sanitizeObsidianFileName(noteTitle);
 
       await fs.promises.mkdir(destinationDir, { recursive: true });
