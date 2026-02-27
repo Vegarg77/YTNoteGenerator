@@ -11,7 +11,11 @@ const STORAGE_KEY = "yt_obsidian_webapp_model";
 const WIKI_STORAGE_KEY = "yt_obsidian_webapp_wiki_model";
 
 const selectedWikiTerms = [];
-let wikiSuggestionTimer = null;
+const selectedWikiBusinesses = [];
+let wikiTermSuggestionTimer = null;
+let wikiBusinessSuggestionTimer = null;
+let wikiTermSuggestionRequestId = 0;
+let wikiBusinessSuggestionRequestId = 0;
 let activeTab = "youtube";
 
 function pad2(n) { return n < 10 ? `0${n}` : `${n}`; }
@@ -65,6 +69,40 @@ function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) 
   ].join("\n");
 }
 
+function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl }) {
+  const cleanOfferings = Array.isArray(offerings) ? offerings.filter(Boolean) : [];
+  const offeringsLines = cleanOfferings.length ? cleanOfferings.map((item) => `- ${item}`) : ["- N/A"];
+
+  return [
+    `#### ${date}  ${time}`,
+    "",
+    `# ${title || "Untitled"}`,
+    "",
+    "## Founded by:",
+    "",
+    foundedBy || "N/A",
+    "",
+    "## Founded on:",
+    "",
+    foundedOn || "N/A",
+    "",
+    "## Headquarters:",
+    "",
+    headquarters || "N/A",
+    "",
+    "## Summary:",
+    "",
+    summary || "N/A",
+    "",
+    "## Offerings, Assets, Services",
+    "",
+    ...offeringsLines,
+    "",
+    "## References",
+    sourceUrl ? `- ${sourceUrl}` : "- https://en.wikipedia.org/"
+  ].join("\n");
+}
+
 
 function normalizeDictionaryContent(content) {
   let text = (content || "").trim();
@@ -77,6 +115,41 @@ function normalizeDictionaryContent(content) {
   if (refsSection >= 0) text = text.slice(0, refsSection).trim();
 
   return text;
+}
+
+function parseBusinessContent(content) {
+  const text = (content || "").trim();
+  if (!text) {
+    return {
+      foundedBy: "N/A",
+      foundedOn: "N/A",
+      headquarters: "N/A",
+      summary: "N/A",
+      offerings: ["N/A"]
+    };
+  }
+
+  const findField = (label) => {
+    const match = text.match(new RegExp(`^${label}:\\s*(.+)$`, "im"));
+    return match?.[1]?.trim() || "N/A";
+  };
+
+  const summaryMatch = text.match(/SUMMARY_START\n([\s\S]*?)\nSUMMARY_END/i);
+  const offeringsMatch = text.match(/OFFERINGS_START\n([\s\S]*?)\nOFFERINGS_END/i);
+
+  const summary = summaryMatch?.[1]?.trim() || "N/A";
+  const offerings = (offeringsMatch?.[1] || "")
+    .split("\n")
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean);
+
+  return {
+    foundedBy: findField("FOUNDED_BY"),
+    foundedOn: findField("FOUNDED_ON"),
+    headquarters: findField("HEADQUARTERS"),
+    summary,
+    offerings: offerings.length ? offerings : ["N/A"]
+  };
 }
 
 function splitIntoChunks(text, maxLen = 12000) {
@@ -526,7 +599,93 @@ ${extract.slice(0, 180000)}`
   }
 
   panel.setProgress("Done", 100, "Dictionary note ready");
-  return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle };
+  return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle, itemType: "dictionary" };
+}
+
+async function processWikipediaBusiness({ apiKey, model, term, panel }) {
+  panel.setProgress("Loading Wikipedia article", 15);
+  const wikiData = await fetchWikipediaPage(term);
+  const articleTitle = wikiData?.title || term;
+  const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
+  const extract = wikiData?.extract || "";
+
+  if (!extract.trim()) {
+    throw new Error("Wikipedia article content was empty.");
+  }
+
+  panel.appendLog(`Fetched Wikipedia article: ${articleTitle}`);
+  panel.setProgress("Summarizing article", 65, "Business note format");
+
+  const summaryMessages = [
+    {
+      role: "system",
+      content: "You are a precise research assistant that fills structured Obsidian templates from source text only."
+    },
+    {
+      role: "user",
+      content:
+`Populate the business note fields using ONLY the provided Wikipedia article text.
+
+Rules:
+- Return plain text using this exact scaffold and markers:
+  FOUNDED_BY: <value or N/A>
+  FOUNDED_ON: <value or N/A>
+  HEADQUARTERS: <value or N/A>
+  SUMMARY_START
+  <3-5 paragraphs, factual and neutral, using only source information>
+  SUMMARY_END
+  OFFERINGS_START
+  - <offering/asset/service 1 or N/A>
+  - <offering/asset/service 2>
+  OFFERINGS_END
+- If a field is not clearly in the source, use N/A.
+- Keep summary to 3-5 paragraphs.
+- Do not add extra headings or commentary.
+
+Article title: ${articleTitle}
+
+ARTICLE TEXT:
+${extract.slice(0, 180000)}`
+    }
+  ];
+
+  const hb = startHeartbeat(panel, "Summarizing article");
+  let structuredContent = "";
+  try {
+    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+  } finally {
+    stopHeartbeat(hb);
+  }
+
+  const parsed = parseBusinessContent(structuredContent);
+  const { date, time } = nowDateTimeStrings();
+  const markdown = buildBusinessMarkdown({
+    date,
+    time,
+    title: articleTitle,
+    foundedBy: parsed.foundedBy,
+    foundedOn: parsed.foundedOn,
+    headquarters: parsed.headquarters,
+    summary: parsed.summary,
+    offerings: parsed.offerings,
+    sourceUrl: articleUrl
+  });
+
+  panel.setProgress("Saving note file…", 92);
+  let saveResult = null;
+  try {
+    saveResult = await saveNoteToServer({
+      markdown,
+      noteTitle: articleTitle,
+      noteType: "business"
+    });
+    panel.appendLog(`Saved note: ${saveResult.fileName}`);
+  } catch (saveErr) {
+    panel.appendLog(`Note save failed: ${saveErr?.message || "Unknown save error"}`);
+  }
+
+  panel.setProgress("Done", 100, "Business note ready");
+  return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle, itemType: "business" };
 }
 
 function renderSelectedWikiTerms() {
@@ -562,12 +721,51 @@ function addWikiTerm(term) {
   renderSelectedWikiTerms();
 }
 
-function clearWikiSuggestions() {
-  el("wikiSuggestionList").innerHTML = "";
+function renderSelectedWikiBusinesses() {
+  const holder = el("wikiSelectedBusinesses");
+  holder.innerHTML = "";
+
+  selectedWikiBusinesses.forEach((term) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = term;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "chip-remove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", `Remove ${term}`);
+    removeBtn.addEventListener("click", () => {
+      const idx = selectedWikiBusinesses.indexOf(term);
+      if (idx >= 0) selectedWikiBusinesses.splice(idx, 1);
+      renderSelectedWikiBusinesses();
+    });
+
+    chip.appendChild(removeBtn);
+    holder.appendChild(chip);
+  });
 }
 
-function renderWikiSuggestions(suggestions) {
-  const listEl = el("wikiSuggestionList");
+function addWikiBusiness(term) {
+  const normalized = (term || "").trim();
+  if (!normalized) return;
+  if (selectedWikiBusinesses.some((entry) => entry.toLowerCase() === normalized.toLowerCase())) return;
+  selectedWikiBusinesses.push(normalized);
+  renderSelectedWikiBusinesses();
+}
+
+function clearWikiSuggestions(listKey = "all") {
+  if (listKey === "term" || listKey === "all") {
+    el("wikiSuggestionList").innerHTML = "";
+  }
+  if (listKey === "business" || listKey === "all") {
+    el("wikiBusinessSuggestionList").innerHTML = "";
+  }
+}
+
+function renderWikiSuggestions(suggestions, listKey) {
+  const isBusiness = listKey === "business";
+  const listEl = isBusiness ? el("wikiBusinessSuggestionList") : el("wikiSuggestionList");
   listEl.innerHTML = "";
 
   suggestions.forEach((suggestion) => {
@@ -580,27 +778,44 @@ function renderWikiSuggestions(suggestions) {
       <div class="suggestion-description">${suggestion.description || "Wikipedia article"}</div>
     `;
     btn.addEventListener("click", () => {
-      addWikiTerm(suggestion.title);
-      el("wikiTermInput").value = "";
-      clearWikiSuggestions();
-      el("wikiTermInput").focus();
+      if (isBusiness) {
+        addWikiBusiness(suggestion.title);
+        el("wikiBusinessInput").value = "";
+        el("wikiBusinessInput").focus();
+        clearWikiSuggestions("business");
+      } else {
+        addWikiTerm(suggestion.title);
+        el("wikiTermInput").value = "";
+        el("wikiTermInput").focus();
+        clearWikiSuggestions("term");
+      }
     });
     listEl.appendChild(btn);
   });
 }
 
-async function updateWikiSuggestions() {
-  const query = el("wikiTermInput").value.trim();
+async function updateWikiSuggestions(listKey, requestId) {
+  const isBusiness = listKey === "business";
+  const inputEl = isBusiness ? el("wikiBusinessInput") : el("wikiTermInput");
+  const query = inputEl.value.trim();
+
   if (query.length < 2) {
-    clearWikiSuggestions();
+    clearWikiSuggestions(listKey);
     return;
   }
 
   try {
     const suggestions = await fetchWikipediaSuggestions(query);
-    renderWikiSuggestions(suggestions.slice(0, 8));
+    const latestId = isBusiness ? wikiBusinessSuggestionRequestId : wikiTermSuggestionRequestId;
+    if (requestId !== latestId) return;
+
+    const latestQuery = inputEl.value.trim();
+    if (latestQuery !== query) return;
+
+    renderWikiSuggestions(suggestions.slice(0, 8), listKey);
   } catch {
-    clearWikiSuggestions();
+    const latestId = isBusiness ? wikiBusinessSuggestionRequestId : wikiTermSuggestionRequestId;
+    if (requestId === latestId) clearWikiSuggestions(listKey);
   }
 }
 
@@ -683,28 +898,41 @@ async function runWikipedia() {
   const apiKey = el("wikiApiKey").value.trim();
   const model = el("wikiModel").value.trim() || "gpt-4o-mini";
   const terms = [...selectedWikiTerms];
+  const businesses = [...selectedWikiBusinesses];
 
   if (!apiKey) {
     inputErr.textContent = "Please enter your OpenAI API key.";
     return;
   }
 
-  if (!terms.length) {
-    inputErr.textContent = "Please add at least one Wikipedia term.";
+  if (!terms.length && !businesses.length) {
+    inputErr.textContent = "Please add at least one Wikipedia term or business/organization.";
     return;
   }
 
   localStorage.setItem(WIKI_STORAGE_KEY, model);
-  statusEl.textContent = `Running ${terms.length} term${terms.length === 1 ? "" : "s"}`;
-  openSource.href = `https://en.wikipedia.org/wiki/${encodeURIComponent(terms[0].replace(/\s+/g, "_"))}`;
+  const totalCount = terms.length + businesses.length;
+  statusEl.textContent = `Running ${totalCount} item${totalCount === 1 ? "" : "s"}`;
+  const firstLabel = terms[0] || businesses[0] || "Wikipedia";
+  openSource.href = `https://en.wikipedia.org/wiki/${encodeURIComponent(firstLabel.replace(/\s+/g, "_"))}`;
 
-  const panels = terms.map((term, index) => ({
+  const workItems = [
+    ...terms.map((term) => ({ term, itemType: "dictionary" })),
+    ...businesses.map((term) => ({ term, itemType: "business" }))
+  ];
+
+  const panels = workItems.map(({ term }, index) => ({
     term,
     panel: createProgressPanel(term, index)
   }));
 
   const results = await Promise.allSettled(
-    panels.map(({ term, panel }) => processWikipediaTerm({ apiKey, model, term, panel }))
+    workItems.map(({ term, itemType }, index) => {
+      const panel = panels[index].panel;
+      return itemType === "business"
+        ? processWikipediaBusiness({ apiKey, model, term, panel })
+        : processWikipediaTerm({ apiKey, model, term, panel });
+    })
   );
 
   finalizeRunResults(results, panels, "wiki");
@@ -729,9 +957,14 @@ function finalizeRunResults(results, panels, mode) {
     return;
   }
 
-  const label = mode === "wiki" ? "Term" : "Video";
+  const label = mode === "wiki" ? "Wikipedia" : "Video";
   const output = successful
-    .map((item, idx) => `# ${label} ${idx + 1}: ${item.title || item.sourceUrl}\n\n${item.markdown}`)
+    .map((item, idx) => {
+      const itemLabel = mode === "wiki"
+        ? (item.itemType === "business" ? "Business" : "Term")
+        : label;
+      return `# ${itemLabel} ${idx + 1}: ${item.title || item.sourceUrl}\n\n${item.markdown}`;
+    })
     .join("\n\n---\n\n");
 
   resultEl.value = output;
@@ -762,8 +995,11 @@ el("tabYoutube").addEventListener("click", () => setActiveTab("youtube"));
 el("tabWikipedia").addEventListener("click", () => setActiveTab("wikipedia"));
 
 el("wikiTermInput").addEventListener("input", () => {
-  clearTimeout(wikiSuggestionTimer);
-  wikiSuggestionTimer = setTimeout(updateWikiSuggestions, 220);
+  clearTimeout(wikiTermSuggestionTimer);
+  const requestId = ++wikiTermSuggestionRequestId;
+  wikiTermSuggestionTimer = setTimeout(() => {
+    updateWikiSuggestions("term", requestId);
+  }, 220);
 });
 
 el("wikiTermInput").addEventListener("keydown", (event) => {
@@ -779,9 +1015,31 @@ el("wikiTermInput").addEventListener("keydown", (event) => {
   }
 });
 
+el("wikiBusinessInput").addEventListener("input", () => {
+  clearTimeout(wikiBusinessSuggestionTimer);
+  const requestId = ++wikiBusinessSuggestionRequestId;
+  wikiBusinessSuggestionTimer = setTimeout(() => {
+    updateWikiSuggestions("business", requestId);
+  }, 220);
+});
+
+el("wikiBusinessInput").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === ",") {
+    event.preventDefault();
+    addWikiBusiness(el("wikiBusinessInput").value);
+    el("wikiBusinessInput").value = "";
+    clearWikiSuggestions();
+  }
+  if (event.key === "Backspace" && !el("wikiBusinessInput").value && selectedWikiBusinesses.length) {
+    selectedWikiBusinesses.pop();
+    renderSelectedWikiBusinesses();
+  }
+});
+
 document.addEventListener("click", (event) => {
   const multiselect = el("wikiMultiSelect");
-  if (!multiselect.contains(event.target)) {
+  const businessMultiselect = el("wikiBusinessMultiSelect");
+  if (!multiselect.contains(event.target) && !businessMultiselect.contains(event.target)) {
     clearWikiSuggestions();
   }
 });
