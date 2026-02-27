@@ -129,13 +129,15 @@ function parseBusinessContent(content) {
     };
   }
 
+  const normalizedText = text.replace(/\r\n?/g, "\n");
+
   const findField = (label) => {
-    const match = text.match(new RegExp(`^${label}:\\s*(.+)$`, "im"));
+    const match = normalizedText.match(new RegExp(`^${label}:\\s*(.+)$`, "im"));
     return match?.[1]?.trim() || "N/A";
   };
 
-  const summaryMatch = text.match(/SUMMARY_START\n([\s\S]*?)\nSUMMARY_END/i);
-  const offeringsMatch = text.match(/OFFERINGS_START\n([\s\S]*?)\nOFFERINGS_END/i);
+  const summaryMatch = normalizedText.match(/SUMMARY_START\n([\s\S]*?)\nSUMMARY_END/i);
+  const offeringsMatch = normalizedText.match(/OFFERINGS_START\n([\s\S]*?)\nOFFERINGS_END/i);
 
   const summary = summaryMatch?.[1]?.trim() || "N/A";
   const offerings = (offeringsMatch?.[1] || "")
@@ -151,6 +153,7 @@ function parseBusinessContent(content) {
     offerings: offerings.length ? offerings : ["N/A"]
   };
 }
+
 
 function splitIntoChunks(text, maxLen = 12000) {
   const chunks = [];
