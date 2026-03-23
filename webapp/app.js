@@ -876,6 +876,12 @@ async function copyTextareaValue(textareaEl) {
   }
 }
 
+function allPanelsSettled() {
+  const badges = progressContainer.querySelectorAll(".badge");
+  if (!badges.length) return true;
+  return Array.from(badges).every((b) => b.textContent === "Done" || b.textContent === "Error");
+}
+
 async function runYoutube() {
   inputErr.textContent = "";
   copyStatus.textContent = "";
@@ -896,6 +902,8 @@ async function runYoutube() {
     inputErr.textContent = "Please enter at least one YouTube video URL.";
     return;
   }
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
 
   localStorage.setItem(STORAGE_KEY, model);
   openSource.href = videoUrls[0];
@@ -932,6 +940,8 @@ async function runWikipedia() {
     inputErr.textContent = "Please add at least one Wikipedia term or business/organization.";
     return;
   }
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
 
   localStorage.setItem(WIKI_STORAGE_KEY, model);
   const totalCount = terms.length + businesses.length;
