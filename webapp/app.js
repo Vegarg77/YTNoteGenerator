@@ -851,6 +851,7 @@ async function copyTextareaValue(textareaEl) {
 
 async function runYoutube() {
   inputErr.textContent = "";
+  copyStatus.textContent = "";
 
   const apiKey = el("apiKey").value.trim();
   const videoUrlsRaw = el("videoUrl").value;
@@ -888,6 +889,7 @@ async function runYoutube() {
 
 async function runWikipedia() {
   inputErr.textContent = "";
+  copyStatus.textContent = "";
 
   const apiKey = el("wikiApiKey").value.trim();
   const model = el("wikiModel").value.trim() || "gpt-4o-mini";
