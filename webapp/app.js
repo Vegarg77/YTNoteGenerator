@@ -177,7 +177,7 @@ function createProgressPanel(itemLabel, index) {
   card.className = "panel video-progress-card";
   card.innerHTML = `
     <div class="panel-header">
-      <h3>Item ${index + 1}</h3>
+      <h3 class="panel-title">Item ${index + 1}</h3>
       <span class="badge soft">Queued</span>
     </div>
     <div class="stepper">
@@ -205,6 +205,7 @@ function createProgressPanel(itemLabel, index) {
   progressContainer.appendChild(card);
 
   const badge = card.querySelector(".badge");
+  const titleEl = card.querySelector(".panel-title");
   const status = card.querySelector(".status-text");
   const pct = card.querySelector(".pct-text");
   const pfill = card.querySelector(".progress-fill");
@@ -212,6 +213,12 @@ function createProgressPanel(itemLabel, index) {
   const log = card.querySelector(".log");
 
   const api = {
+    setTitle(title) {
+      if (title && title.trim()) {
+        titleEl.textContent = title.trim();
+        titleEl.title = title.trim();
+      }
+    },
     setProgress(stage, value, note) {
       status.textContent = stage || "";
       const pctNum = Math.max(0, Math.min(100, Math.round(value || 0)));
@@ -385,10 +392,10 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
   });
 }
 
-function startHeartbeat(panel, label = "Working…") {
+function startHeartbeat(panel, label = "Working…", floorPct = 69) {
   let i = 0;
   return setInterval(() => {
-    const pct = 69 + (i++ % 3);
+    const pct = floorPct + (i++ % 3);
     panel.setProgress(label, pct, "still running");
   }, 10000);
 }
@@ -398,7 +405,7 @@ function stopHeartbeat(timer) {
 }
 
 async function processVideo({ apiKey, model, videoUrl, panel }) {
-  panel.setProgress("Fetching metadata + transcript", 12);
+  panel.setProgress("Fetching metadata + transcript", 5);
   const transcriptResult = await fetchTranscriptFromServer(videoUrl);
   const transcript = transcriptResult.transcript;
   const meta = transcriptResult.metadata;
@@ -406,9 +413,29 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   panel.appendLog(`Transcript source: ${transcriptResult.source}`);
   panel.appendLog(`Transcript lines: ${transcript.split("\n").length}`);
 
-  panel.setProgress("Cleaning transcript…", 38, "Preparing");
+  // Update panel title to the actual video title now that we have metadata
+  if (meta.title) panel.setTitle(meta.title);
+
+  // Determine chunks upfront so we can calculate accurate progress weights.
+  // Weights: 1 (fetch) + numChunks (one per chunk) + 1 (summarize) + 0.1 (save)
+  const chunks = transcript.length > 12000 ? splitIntoChunks(transcript, 12000) : null;
+  const numChunks = chunks ? chunks.length : 1;
+  const totalWeight = 1 + numChunks + 1 + 0.1;
+
+  function pctAt(unitsComplete) {
+    return Math.round((unitsComplete / totalWeight) * 100);
+  }
+
+  const fetchDonePct = pctAt(1);
+  const summarizeStartPct = pctAt(1 + numChunks);
+  const savePct = Math.min(99, pctAt(1 + numChunks + 1));
+
+  panel.appendLog(`Transcript chunks: ${numChunks}`);
+  panel.setProgress("Cleaning transcript…", fetchDonePct, "Preparing");
+
   let fixedTranscript = "";
-  if (transcript.length <= 12000) {
+  if (!chunks) {
+    // Single-pass clean (transcript fits in one chunk)
     const cleanMessages = [
       { role: "system", content: "You are a precise transcription editor." },
       {
@@ -418,12 +445,12 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
           transcript
       }
     ];
-    const hb = startHeartbeat(panel, "Cleaning transcript…");
+    const hb = startHeartbeat(panel, "Cleaning transcript…", fetchDonePct);
     try {
       try {
         fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean)");
       } catch {
-        panel.setProgress("Retrying clean…", 45);
+        panel.setProgress("Retrying clean…", pctAt(1.5));
         fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean retry)");
       }
     } finally {
@@ -431,11 +458,11 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     }
     fixedTranscript = fixedTranscript.trim();
   } else {
-    const chunks = splitIntoChunks(transcript, 12000);
     const out = [];
     for (let i = 0; i < chunks.length; i += 1) {
       const chunkLabel = `Cleaning chunk ${i + 1}/${chunks.length}`;
-      panel.setProgress(chunkLabel, 38 + Math.round((i / chunks.length) * 25));
+      // Progress: after completing i chunks out of numChunks (starting from 1 unit already done for fetch)
+      panel.setProgress(chunkLabel, pctAt(1 + i));
       panel.appendLog(chunkLabel);
       const cleanChunkMessages = [
         { role: "system", content: "You are a precise transcription editor." },
@@ -450,7 +477,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
       try {
         cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
       } catch {
-        panel.setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, 48 + Math.round((i / chunks.length) * 20));
+        panel.setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, pctAt(1 + i + 0.5));
         cleaned = await withTimeout(
           (signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }),
           120000,
@@ -462,7 +489,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     fixedTranscript = out.join("\n\n");
   }
 
-  panel.setProgress("Summarizing…", 70, "3–5 paragraph summary");
+  panel.setProgress("Summarizing…", summarizeStartPct, "3–5 paragraph summary");
   const summaryMessages = [
     { role: "system", content: "You are an expert at writing structured, detailed summaries." },
     {
@@ -475,12 +502,12 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
 
   let summary = "";
   {
-    const hb = startHeartbeat(panel, "Summarizing…");
+    const hb = startHeartbeat(panel, "Summarizing…", summarizeStartPct);
     try {
       try {
         summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary)");
       } catch {
-        panel.setProgress("Retrying summary…", 74);
+        panel.setProgress("Retrying summary…", pctAt(1 + numChunks + 0.5));
         summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary retry)");
       }
     } finally {
@@ -499,7 +526,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     videoUrl: meta.url || videoUrl
   });
 
-  panel.setProgress("Saving note file…", 92);
+  panel.setProgress("Saving note file…", savePct);
   let saveResult = null;
   try {
     saveResult = await saveNoteToServer({
@@ -564,7 +591,7 @@ ${extract.slice(0, 180000)}`
     }
   ];
 
-  const hb = startHeartbeat(panel, "Summarizing article");
+  const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
     structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
@@ -644,7 +671,7 @@ ${extract.slice(0, 180000)}`
     }
   ];
 
-  const hb = startHeartbeat(panel, "Summarizing article");
+  const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
     structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
@@ -849,6 +876,12 @@ async function copyTextareaValue(textareaEl) {
   }
 }
 
+function allPanelsSettled() {
+  const badges = progressContainer.querySelectorAll(".badge");
+  if (!badges.length) return true;
+  return Array.from(badges).every((b) => b.textContent === "Done" || b.textContent === "Error");
+}
+
 async function runYoutube() {
   inputErr.textContent = "";
   copyStatus.textContent = "";
@@ -869,6 +902,8 @@ async function runYoutube() {
     inputErr.textContent = "Please enter at least one YouTube video URL.";
     return;
   }
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
 
   localStorage.setItem(STORAGE_KEY, model);
   openSource.href = videoUrls[0];
@@ -905,6 +940,8 @@ async function runWikipedia() {
     inputErr.textContent = "Please add at least one Wikipedia term or business/organization.";
     return;
   }
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
 
   localStorage.setItem(WIKI_STORAGE_KEY, model);
   const totalCount = terms.length + businesses.length;

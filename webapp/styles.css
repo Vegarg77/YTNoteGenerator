@@ -280,6 +280,14 @@ textarea::placeholder { color: #64748b; }
   margin-bottom: 8px;
 }
 
+.video-progress-card .panel-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  cursor: default;
+}
+
 
 .video-progress-card .log {
   flex: 1;
