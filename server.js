@@ -35,7 +35,7 @@ const OBSIDIAN_BUSINESS_DIR = OBSIDIAN_NOTE_DIR;
 const BRIGHT_DATA_API_TOKEN = (process.env.BRIGHT_DATA_API_TOKEN || "").trim();
 const BRIGHT_DATA_YT_DATASET_ID = (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim();
 const BRIGHT_DATA_API_BASE = (process.env.BRIGHT_DATA_API_BASE || "https://api.brightdata.com").replace(/\/$/, "");
-const BRIGHT_DATA_TIMEOUT_MS = Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 60000;
+const BRIGHT_DATA_TIMEOUT_MS = Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 120000;
 const BRIGHT_DATA_POLL_INTERVAL_MS = Number(process.env.BRIGHT_DATA_POLL_INTERVAL_MS) || 2000;
 
 const MIME_TYPES = {

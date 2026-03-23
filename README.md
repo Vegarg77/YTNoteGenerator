@@ -65,7 +65,7 @@ Optional overrides supported by the server:
 
 - `PORT` (default `5173`)
 - `BRIGHT_DATA_API_BASE` (default `https://api.brightdata.com`)
-- `BRIGHT_DATA_TIMEOUT_MS` (default `60000`)
+- `BRIGHT_DATA_TIMEOUT_MS` (default `120000`)
 - `BRIGHT_DATA_POLL_INTERVAL_MS` (default `2000`)
 
 ### 2) (Important) Adjust note-save location
