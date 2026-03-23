@@ -851,7 +851,7 @@ async function copyTextareaValue(textareaEl) {
 
 async function runYoutube() {
   inputErr.textContent = "";
-  resetUi();
+  copyStatus.textContent = "";
 
   const apiKey = el("apiKey").value.trim();
   const videoUrlsRaw = el("videoUrl").value;
@@ -874,9 +874,10 @@ async function runYoutube() {
   openSource.href = videoUrls[0];
   statusEl.textContent = `Running ${videoUrls.length} video${videoUrls.length === 1 ? "" : "s"}`;
 
+  const offset = progressContainer.children.length;
   const panels = videoUrls.map((videoUrl, index) => ({
     videoUrl,
-    panel: createProgressPanel(videoUrl, index)
+    panel: createProgressPanel(videoUrl, offset + index)
   }));
 
   const results = await Promise.allSettled(
@@ -888,7 +889,7 @@ async function runYoutube() {
 
 async function runWikipedia() {
   inputErr.textContent = "";
-  resetUi();
+  copyStatus.textContent = "";
 
   const apiKey = el("wikiApiKey").value.trim();
   const model = el("wikiModel").value.trim() || "gpt-4o-mini";
@@ -916,9 +917,10 @@ async function runWikipedia() {
     ...businesses.map((term) => ({ term, itemType: "business" }))
   ];
 
+  const offset = progressContainer.children.length;
   const panels = workItems.map(({ term }, index) => ({
     term,
-    panel: createProgressPanel(term, index)
+    panel: createProgressPanel(term, offset + index)
   }));
 
   const results = await Promise.allSettled(
@@ -962,7 +964,7 @@ function finalizeRunResults(results, panels, mode) {
     })
     .join("\n\n---\n\n");
 
-  resultEl.value = output;
+  resultEl.value = resultEl.value ? resultEl.value + "\n\n---\n\n" + output : output;
   copyBtn.disabled = false;
   if (successful[0]?.sourceUrl) openSource.href = successful[0].sourceUrl;
   statusEl.textContent = failed ? `Done (${successful.length} succeeded, ${failed} failed)` : `Done (${successful.length} succeeded)`;
