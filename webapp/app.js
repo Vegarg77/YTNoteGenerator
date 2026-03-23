@@ -392,10 +392,10 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
   });
 }
 
-function startHeartbeat(panel, label = "Working…") {
+function startHeartbeat(panel, label = "Working…", floorPct = 69) {
   let i = 0;
   return setInterval(() => {
-    const pct = 69 + (i++ % 3);
+    const pct = floorPct + (i++ % 3);
     panel.setProgress(label, pct, "still running");
   }, 10000);
 }
@@ -428,7 +428,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
 
   const fetchDonePct = pctAt(1);
   const summarizeStartPct = pctAt(1 + numChunks);
-  const savePct = pctAt(1 + numChunks + 1);
+  const savePct = Math.min(99, pctAt(1 + numChunks + 1));
 
   panel.appendLog(`Transcript chunks: ${numChunks}`);
   panel.setProgress("Cleaning transcript…", fetchDonePct, "Preparing");
@@ -445,7 +445,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
           transcript
       }
     ];
-    const hb = startHeartbeat(panel, "Cleaning transcript…");
+    const hb = startHeartbeat(panel, "Cleaning transcript…", fetchDonePct);
     try {
       try {
         fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean)");
@@ -502,7 +502,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
 
   let summary = "";
   {
-    const hb = startHeartbeat(panel, "Summarizing…");
+    const hb = startHeartbeat(panel, "Summarizing…", summarizeStartPct);
     try {
       try {
         summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary)");
@@ -591,7 +591,7 @@ ${extract.slice(0, 180000)}`
     }
   ];
 
-  const hb = startHeartbeat(panel, "Summarizing article");
+  const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
     structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
@@ -671,7 +671,7 @@ ${extract.slice(0, 180000)}`
     }
   ];
 
-  const hb = startHeartbeat(panel, "Summarizing article");
+  const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
     structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
