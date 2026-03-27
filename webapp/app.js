@@ -17,6 +17,8 @@ let wikiBusinessSuggestionTimer = null;
 let wikiTermSuggestionRequestId = 0;
 let wikiBusinessSuggestionRequestId = 0;
 let activeTab = "youtube";
+let isProcessing = false;
+let failedVideoUrls = [];
 
 function pad2(n) { return n < 10 ? `0${n}` : `${n}`; }
 function nowDateTimeStrings() {
@@ -594,7 +596,12 @@ ${extract.slice(0, 180000)}`
   const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
-    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
+    try {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
+    } catch {
+      panel.setProgress("Retrying summary…", 70);
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary retry)");
+    }
   } finally {
     stopHeartbeat(hb);
   }
@@ -674,7 +681,12 @@ ${extract.slice(0, 180000)}`
   const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
-    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+    try {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+    } catch {
+      panel.setProgress("Retrying summary…", 70);
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary retry)");
+    }
   } finally {
     stopHeartbeat(hb);
   }
@@ -795,10 +807,14 @@ function renderWikiSuggestions(suggestions, listKey) {
     btn.type = "button";
     btn.className = "suggestion-item";
     btn.setAttribute("role", "option");
-    btn.innerHTML = `
-      <div class="suggestion-title">${suggestion.title}</div>
-      <div class="suggestion-description">${suggestion.description || "Wikipedia article"}</div>
-    `;
+    const titleDiv = document.createElement("div");
+    titleDiv.className = "suggestion-title";
+    titleDiv.textContent = suggestion.title;
+    const descDiv = document.createElement("div");
+    descDiv.className = "suggestion-description";
+    descDiv.textContent = suggestion.description || "Wikipedia article";
+    btn.appendChild(titleDiv);
+    btn.appendChild(descDiv);
     btn.addEventListener("click", () => {
       if (isBusiness) {
         addWikiBusiness(suggestion.title);
@@ -882,6 +898,11 @@ function allPanelsSettled() {
   return Array.from(badges).every((b) => b.textContent === "Done" || b.textContent === "Error");
 }
 
+function updateActionButtons() {
+  el("retryFailed").disabled = isProcessing || !failedVideoUrls.length;
+  el("clearWikiFields").disabled = isProcessing;
+}
+
 async function runYoutube() {
   inputErr.textContent = "";
   copyStatus.textContent = "";
@@ -905,6 +926,9 @@ async function runYoutube() {
 
   if (allPanelsSettled()) progressContainer.innerHTML = "";
 
+  isProcessing = true;
+  updateActionButtons();
+
   localStorage.setItem(STORAGE_KEY, model);
   openSource.href = videoUrls[0];
   statusEl.textContent = `Running ${videoUrls.length} video${videoUrls.length === 1 ? "" : "s"}`;
@@ -919,7 +943,19 @@ async function runYoutube() {
     panels.map(({ videoUrl, panel }) => processVideo({ apiKey, model, videoUrl, panel }))
   );
 
+  results.forEach((entry, index) => {
+    const url = panels[index].videoUrl;
+    if (entry.status === "rejected") {
+      if (!failedVideoUrls.includes(url)) failedVideoUrls.push(url);
+    } else {
+      const idx = failedVideoUrls.indexOf(url);
+      if (idx >= 0) failedVideoUrls.splice(idx, 1);
+    }
+  });
+
+  isProcessing = false;
   finalizeRunResults(results, panels, "video");
+  updateActionButtons();
 }
 
 async function runWikipedia() {
@@ -942,6 +978,9 @@ async function runWikipedia() {
   }
 
   if (allPanelsSettled()) progressContainer.innerHTML = "";
+
+  isProcessing = true;
+  updateActionButtons();
 
   localStorage.setItem(WIKI_STORAGE_KEY, model);
   const totalCount = terms.length + businesses.length;
@@ -969,7 +1008,66 @@ async function runWikipedia() {
     })
   );
 
+  isProcessing = false;
   finalizeRunResults(results, panels, "wiki");
+  updateActionButtons();
+}
+
+async function retryFailed() {
+  if (!failedVideoUrls.length || isProcessing) return;
+
+  const apiKey = el("apiKey").value.trim();
+  const model = el("model").value.trim() || "gpt-4o-mini";
+
+  if (!apiKey) {
+    inputErr.textContent = "Please enter your OpenAI API key.";
+    return;
+  }
+
+  inputErr.textContent = "";
+  copyStatus.textContent = "";
+
+  const urlsToRetry = [...failedVideoUrls];
+  failedVideoUrls = [];
+
+  isProcessing = true;
+  updateActionButtons();
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
+
+  statusEl.textContent = `Retrying ${urlsToRetry.length} failed video${urlsToRetry.length === 1 ? "" : "s"}`;
+
+  const offset = progressContainer.children.length;
+  const panels = urlsToRetry.map((videoUrl, index) => ({
+    videoUrl,
+    panel: createProgressPanel(videoUrl, offset + index)
+  }));
+
+  const results = await Promise.allSettled(
+    panels.map(({ videoUrl, panel }) => processVideo({ apiKey, model, videoUrl, panel }))
+  );
+
+  results.forEach((entry, index) => {
+    if (entry.status === "rejected") {
+      const url = panels[index].videoUrl;
+      if (!failedVideoUrls.includes(url)) failedVideoUrls.push(url);
+    }
+  });
+
+  isProcessing = false;
+  finalizeRunResults(results, panels, "video");
+  updateActionButtons();
+}
+
+function clearWikiFields() {
+  if (isProcessing) return;
+  selectedWikiTerms.length = 0;
+  selectedWikiBusinesses.length = 0;
+  renderSelectedWikiTerms();
+  renderSelectedWikiBusinesses();
+  el("wikiTermInput").value = "";
+  el("wikiBusinessInput").value = "";
+  clearWikiSuggestions();
 }
 
 function finalizeRunResults(results, panels, mode) {
@@ -1023,7 +1121,9 @@ copyBtn.addEventListener("click", async () => {
 });
 
 el("run").addEventListener("click", runYoutube);
+el("retryFailed").addEventListener("click", retryFailed);
 el("runWikipedia").addEventListener("click", runWikipedia);
+el("clearWikiFields").addEventListener("click", clearWikiFields);
 
 el("tabYoutube").addEventListener("click", () => setActiveTab("youtube"));
 el("tabWikipedia").addEventListener("click", () => setActiveTab("wikipedia"));

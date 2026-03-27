@@ -42,7 +42,10 @@
             <label for="model">Model</label>
             <input id="model" type="text" value="gpt-4o-mini" />
 
-            <button id="run" class="btn primary">Generate Obsidian Note</button>
+            <div class="btn-row">
+              <button id="run" class="btn primary">Generate Obsidian Note</button>
+              <button id="retryFailed" class="btn ghost" disabled>Retry Failed</button>
+            </div>
           </div>
 
           <div id="panelWikipedia" class="tab-panel" role="tabpanel" aria-labelledby="tabWikipedia" hidden>
@@ -70,7 +73,10 @@
             </div>
             <p class="muted">Tip: Press Enter to add your typed business, or click a suggestion from Wikipedia.</p>
 
-            <button id="runWikipedia" class="btn primary">Generate Wikipedia Notes</button>
+            <div class="btn-row">
+              <button id="runWikipedia" class="btn primary">Generate Wikipedia Notes</button>
+              <button id="clearWikiFields" class="btn ghost" disabled>Clear Fields</button>
+            </div>
           </div>
 
           <div id="inputErr" class="err"></div>
