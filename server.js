@@ -48,16 +48,14 @@ const MIME_TYPES = {
 
 function sendJson(res, status, payload) {
   res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*"
+    "Content-Type": "application/json; charset=utf-8"
   });
   res.end(JSON.stringify(payload));
 }
 
 function sendText(res, status, text) {
   res.writeHead(status, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Access-Control-Allow-Origin": "*"
+    "Content-Type": "text/plain; charset=utf-8"
   });
   res.end(text);
 }
@@ -85,11 +83,14 @@ async function resolveUniqueFilePath(directory, preferredFileName) {
 
   while (true) {
     try {
-      await fs.promises.access(candidate, fs.constants.F_OK);
+      // "wx" opens exclusively — throws EEXIST if file already exists, atomically claiming the name
+      const fh = await fs.promises.open(candidate, "wx");
+      await fh.close();
+      return candidate;
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
       candidate = path.join(directory, `${baseName} (${suffix})${extension}`);
       suffix += 1;
-    } catch {
-      return candidate;
     }
   }
 }
@@ -492,8 +493,7 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 200, {
         saved: true,
-        fileName: path.basename(filePath),
-        filePath
+        fileName: path.basename(filePath)
       });
     } catch (err) {
       sendText(res, 500, `Failed to save note: ${err.message}`);
@@ -554,6 +554,6 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`YTNoteGenerator server running on http://localhost:${PORT}`);
 });

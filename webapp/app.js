@@ -596,7 +596,12 @@ ${extract.slice(0, 180000)}`
   const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
-    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
+    try {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
+    } catch {
+      panel.setProgress("Retrying summary…", 70);
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary retry)");
+    }
   } finally {
     stopHeartbeat(hb);
   }
@@ -676,7 +681,12 @@ ${extract.slice(0, 180000)}`
   const hb = startHeartbeat(panel, "Summarizing article", 65);
   let structuredContent = "";
   try {
-    structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+    try {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+    } catch {
+      panel.setProgress("Retrying summary…", 70);
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary retry)");
+    }
   } finally {
     stopHeartbeat(hb);
   }
@@ -797,10 +807,14 @@ function renderWikiSuggestions(suggestions, listKey) {
     btn.type = "button";
     btn.className = "suggestion-item";
     btn.setAttribute("role", "option");
-    btn.innerHTML = `
-      <div class="suggestion-title">${suggestion.title}</div>
-      <div class="suggestion-description">${suggestion.description || "Wikipedia article"}</div>
-    `;
+    const titleDiv = document.createElement("div");
+    titleDiv.className = "suggestion-title";
+    titleDiv.textContent = suggestion.title;
+    const descDiv = document.createElement("div");
+    descDiv.className = "suggestion-description";
+    descDiv.textContent = suggestion.description || "Wikipedia article";
+    btn.appendChild(titleDiv);
+    btn.appendChild(descDiv);
     btn.addEventListener("click", () => {
       if (isBusiness) {
         addWikiBusiness(suggestion.title);
@@ -930,9 +944,12 @@ async function runYoutube() {
   );
 
   results.forEach((entry, index) => {
+    const url = panels[index].videoUrl;
     if (entry.status === "rejected") {
-      const url = panels[index].videoUrl;
       if (!failedVideoUrls.includes(url)) failedVideoUrls.push(url);
+    } else {
+      const idx = failedVideoUrls.indexOf(url);
+      if (idx >= 0) failedVideoUrls.splice(idx, 1);
     }
   });
 
@@ -1015,6 +1032,8 @@ async function retryFailed() {
 
   isProcessing = true;
   updateActionButtons();
+
+  if (allPanelsSettled()) progressContainer.innerHTML = "";
 
   statusEl.textContent = `Retrying ${urlsToRetry.length} failed video${urlsToRetry.length === 1 ? "" : "s"}`;
 
