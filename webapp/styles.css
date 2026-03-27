@@ -364,6 +364,17 @@ textarea::placeholder { color: #64748b; }
   }
 }
 
+.btn-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.btn-row .btn.primary {
+  margin-top: 0;
+}
+
 .tab-row {
   display: flex;
   gap: 8px;
