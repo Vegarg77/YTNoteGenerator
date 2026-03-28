@@ -893,7 +893,9 @@ async function copyTextareaValue(textareaEl) {
 
 async function loadSettings() {
   try {
-    const resp = await fetch("/api/settings");
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const resp = await fetch("/api/settings", { signal: ctrl.signal }).finally(() => clearTimeout(t));
     if (!resp.ok) return;
     const data = await resp.json();
     appSettings = data;
@@ -939,6 +941,7 @@ async function saveSettings() {
     }
     const data = await resp.json();
     appSettings = data;
+    populateSettingsForm(data);
     okEl.textContent = "Settings saved.";
     setTimeout(() => { okEl.textContent = ""; }, 3000);
   } catch (err) {
@@ -947,6 +950,7 @@ async function saveSettings() {
 }
 
 function openSettings() {
+  populateSettingsForm(appSettings);
   el("settingsOverlay").hidden = false;
   el("settingsErr").textContent = "";
   el("settingsOk").textContent = "";

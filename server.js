@@ -628,8 +628,17 @@ const server = http.createServer(async (req, res) => {
         ];
         const updates = {};
         for (const key of allowedKeys) {
-          if (key in payload) {
-            updates[key] = String(payload[key]).trim();
+          if (!(key in payload)) continue;
+          const val = String(payload[key]).trim();
+          if (key === "BRIGHT_DATA_TIMEOUT_MS") {
+            const ms = Number(val);
+            if (!Number.isFinite(ms) || ms < 5000 || ms > 600000) {
+              sendText(res, 400, "BRIGHT_DATA_TIMEOUT_MS must be between 5000 and 600000");
+              return;
+            }
+            updates[key] = String(ms);
+          } else {
+            updates[key] = val;
           }
         }
         writeEnvFile(updates);
