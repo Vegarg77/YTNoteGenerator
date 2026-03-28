@@ -28,15 +28,64 @@ loadDotenv();
 
 const PORT = Number(process.env.PORT) || 5173;
 const WEBAPP_DIR = path.join(__dirname, "webapp");
-const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
-const OBSIDIAN_DICTIONARY_DIR = OBSIDIAN_NOTE_DIR;
-const OBSIDIAN_BUSINESS_DIR = OBSIDIAN_NOTE_DIR;
+const ENV_PATH = path.join(__dirname, ".env");
 
-const BRIGHT_DATA_API_TOKEN = (process.env.BRIGHT_DATA_API_TOKEN || "").trim();
-const BRIGHT_DATA_YT_DATASET_ID = (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim();
-const BRIGHT_DATA_API_BASE = (process.env.BRIGHT_DATA_API_BASE || "https://api.brightdata.com").replace(/\/$/, "");
-const BRIGHT_DATA_TIMEOUT_MS = Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 120000;
-const BRIGHT_DATA_POLL_INTERVAL_MS = Number(process.env.BRIGHT_DATA_POLL_INTERVAL_MS) || 2000;
+function getConfig() {
+  return {
+    OBSIDIAN_NOTE_DIR: (process.env.OBSIDIAN_NOTE_DIR || "").trim(),
+    OBSIDIAN_DICTIONARY_DIR: (process.env.OBSIDIAN_DICTIONARY_DIR || process.env.OBSIDIAN_NOTE_DIR || "").trim(),
+    OBSIDIAN_BUSINESS_DIR: (process.env.OBSIDIAN_BUSINESS_DIR || process.env.OBSIDIAN_NOTE_DIR || "").trim(),
+    OPENAI_API_KEY: (process.env.OPENAI_API_KEY || "").trim(),
+    OPENAI_MODEL: (process.env.OPENAI_MODEL || "gpt-4o-mini").trim(),
+    BRIGHT_DATA_API_TOKEN: (process.env.BRIGHT_DATA_API_TOKEN || "").trim(),
+    BRIGHT_DATA_YT_DATASET_ID: (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim(),
+    BRIGHT_DATA_API_BASE: (process.env.BRIGHT_DATA_API_BASE || "https://api.brightdata.com").replace(/\/$/, ""),
+    BRIGHT_DATA_TIMEOUT_MS: Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 120000,
+    BRIGHT_DATA_POLL_INTERVAL_MS: Number(process.env.BRIGHT_DATA_POLL_INTERVAL_MS) || 2000,
+  };
+}
+
+function writeEnvFile(settings) {
+  const lines = [];
+  if (fs.existsSync(ENV_PATH)) {
+    const raw = fs.readFileSync(ENV_PATH, "utf8");
+    for (const lineRaw of raw.replaceAll(String.fromCharCode(13), "").split("\n")) {
+      const line = lineRaw.trim();
+      if (!line || line.startsWith("#")) {
+        lines.push(lineRaw);
+        continue;
+      }
+      const idx = line.indexOf("=");
+      if (idx < 0) { lines.push(lineRaw); continue; }
+      const key = line.slice(0, idx).trim();
+      if (key in settings) {
+        lines.push(`${key}=${settings[key]}`);
+        delete settings[key];
+      } else {
+        lines.push(lineRaw);
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(settings)) {
+    if (value !== undefined && value !== "") {
+      lines.push(`${key}=${value}`);
+    }
+  }
+  fs.writeFileSync(ENV_PATH, lines.join("\n") + "\n", "utf8");
+}
+
+function reloadEnv() {
+  const settingsKeys = [
+    "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
+    "OPENAI_API_KEY", "OPENAI_MODEL",
+    "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_YT_DATASET_ID",
+    "BRIGHT_DATA_API_BASE", "BRIGHT_DATA_TIMEOUT_MS", "BRIGHT_DATA_POLL_INTERVAL_MS"
+  ];
+  for (const key of settingsKeys) {
+    delete process.env[key];
+  }
+  loadDotenv();
+}
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -276,9 +325,9 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   };
 }
 
-async function waitForPollInterval(signal) {
+async function waitForPollInterval(signal, pollMs) {
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, BRIGHT_DATA_POLL_INTERVAL_MS);
+    const timer = setTimeout(resolve, pollMs);
     signal?.addEventListener("abort", () => {
       clearTimeout(timer);
       reject(new Error("Bright Data polling aborted"));
@@ -286,12 +335,12 @@ async function waitForPollInterval(signal) {
   });
 }
 
-async function pollBrightDataSnapshot(snapshotId, signal) {
+async function pollBrightDataSnapshot(snapshotId, signal, cfg) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < BRIGHT_DATA_TIMEOUT_MS) {
-    const progressUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/progress/${encodeURIComponent(snapshotId)}`;
+  while (Date.now() - startedAt < cfg.BRIGHT_DATA_TIMEOUT_MS) {
+    const progressUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/progress/${encodeURIComponent(snapshotId)}`;
     const progress = await fetchJson(progressUrl, {
-      headers: { Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}` },
+      headers: { Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}` },
       signal
     });
 
@@ -302,31 +351,32 @@ async function pollBrightDataSnapshot(snapshotId, signal) {
       throw new Error(`Bright Data snapshot ${snapshotId} failed with status: ${progress?.status || "unknown"}`);
     }
 
-    await waitForPollInterval(signal);
+    await waitForPollInterval(signal, cfg.BRIGHT_DATA_POLL_INTERVAL_MS);
   }
 
   throw new Error(`Timed out waiting for Bright Data snapshot ${snapshotId}`);
 }
 
-function validateBrightDataConfig() {
+function validateBrightDataConfig(cfg) {
   const missing = [];
-  if (!BRIGHT_DATA_API_TOKEN) missing.push("BRIGHT_DATA_API_TOKEN");
-  if (!BRIGHT_DATA_YT_DATASET_ID) missing.push("BRIGHT_DATA_YT_DATASET_ID");
+  if (!cfg.BRIGHT_DATA_API_TOKEN) missing.push("BRIGHT_DATA_API_TOKEN");
+  if (!cfg.BRIGHT_DATA_YT_DATASET_ID) missing.push("BRIGHT_DATA_YT_DATASET_ID");
   if (missing.length) {
     throw new Error(`Missing Bright Data env vars: ${missing.join(", ")}`);
   }
 }
 
 async function fetchTranscriptBundle(videoId, rawUrl, signal) {
-  validateBrightDataConfig();
+  const cfg = getConfig();
+  validateBrightDataConfig(cfg);
 
   const resolvedUrl = rawUrl || `https://www.youtube.com/watch?v=${videoId}`;
-  const triggerUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/trigger?dataset_id=${encodeURIComponent(BRIGHT_DATA_YT_DATASET_ID)}&notify=false&include_errors=true`;
+  const triggerUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/trigger?dataset_id=${encodeURIComponent(cfg.BRIGHT_DATA_YT_DATASET_ID)}&notify=false&include_errors=true`;
 
   const triggerResp = await fetchJson(triggerUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}`,
+      Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ input: [{ url: resolvedUrl }] }),
@@ -338,11 +388,11 @@ async function fetchTranscriptBundle(videoId, rawUrl, signal) {
     throw new Error("Bright Data trigger did not return a snapshot id");
   }
 
-  await pollBrightDataSnapshot(snapshotId, signal);
+  await pollBrightDataSnapshot(snapshotId, signal, cfg);
 
-  const snapshotUrl = `${BRIGHT_DATA_API_BASE}/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`;
+  const snapshotUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`;
   const snapshotData = await fetchJson(snapshotUrl, {
-    headers: { Authorization: `Bearer ${BRIGHT_DATA_API_TOKEN}` },
+    headers: { Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}` },
     signal
   });
 
@@ -439,7 +489,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), BRIGHT_DATA_TIMEOUT_MS + 5000);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + 5000);
 
     try {
       const { text, source, metadata } = await fetchTranscriptBundle(videoId, rawUrl, ctrl.signal);
@@ -480,11 +530,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const cfg = getConfig();
       const destinationDir = noteType === "dictionary"
-        ? OBSIDIAN_DICTIONARY_DIR
+        ? cfg.OBSIDIAN_DICTIONARY_DIR
         : noteType === "business"
-          ? OBSIDIAN_BUSINESS_DIR
-          : OBSIDIAN_NOTE_DIR;
+          ? cfg.OBSIDIAN_BUSINESS_DIR
+          : cfg.OBSIDIAN_NOTE_DIR;
       const fileName = sanitizeObsidianFileName(noteTitle);
 
       await fs.promises.mkdir(destinationDir, { recursive: true });
@@ -548,6 +599,68 @@ const server = http.createServer(async (req, res) => {
     } finally {
       clearTimeout(timer);
     }
+    return;
+  }
+
+  if (url.pathname === "/api/settings") {
+    if (req.method === "GET") {
+      reloadEnv();
+      const cfg = getConfig();
+      sendJson(res, 200, {
+        OBSIDIAN_NOTE_DIR: cfg.OBSIDIAN_NOTE_DIR,
+        OBSIDIAN_DICTIONARY_DIR: cfg.OBSIDIAN_DICTIONARY_DIR,
+        OBSIDIAN_BUSINESS_DIR: cfg.OBSIDIAN_BUSINESS_DIR,
+        OPENAI_API_KEY: cfg.OPENAI_API_KEY,
+        OPENAI_MODEL: cfg.OPENAI_MODEL,
+        BRIGHT_DATA_API_TOKEN: cfg.BRIGHT_DATA_API_TOKEN,
+        BRIGHT_DATA_TIMEOUT_MS: cfg.BRIGHT_DATA_TIMEOUT_MS,
+      });
+      return;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const payload = await readJsonBody(req);
+        const allowedKeys = [
+          "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
+          "OPENAI_API_KEY", "OPENAI_MODEL",
+          "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_TIMEOUT_MS"
+        ];
+        const updates = {};
+        for (const key of allowedKeys) {
+          if (!(key in payload)) continue;
+          const val = String(payload[key]).trim();
+          if (key === "BRIGHT_DATA_TIMEOUT_MS") {
+            const ms = Number(val);
+            if (!Number.isFinite(ms) || ms < 5000 || ms > 600000) {
+              sendText(res, 400, "BRIGHT_DATA_TIMEOUT_MS must be between 5000 and 600000");
+              return;
+            }
+            updates[key] = String(ms);
+          } else {
+            updates[key] = val;
+          }
+        }
+        writeEnvFile(updates);
+        reloadEnv();
+        const cfg = getConfig();
+        sendJson(res, 200, {
+          saved: true,
+          OBSIDIAN_NOTE_DIR: cfg.OBSIDIAN_NOTE_DIR,
+          OBSIDIAN_DICTIONARY_DIR: cfg.OBSIDIAN_DICTIONARY_DIR,
+          OBSIDIAN_BUSINESS_DIR: cfg.OBSIDIAN_BUSINESS_DIR,
+          OPENAI_API_KEY: cfg.OPENAI_API_KEY,
+          OPENAI_MODEL: cfg.OPENAI_MODEL,
+          BRIGHT_DATA_API_TOKEN: cfg.BRIGHT_DATA_API_TOKEN,
+          BRIGHT_DATA_TIMEOUT_MS: cfg.BRIGHT_DATA_TIMEOUT_MS,
+        });
+      } catch (err) {
+        sendText(res, 500, `Failed to save settings: ${err.message}`);
+      }
+      return;
+    }
+
+    sendText(res, 405, "Method not allowed");
     return;
   }
 

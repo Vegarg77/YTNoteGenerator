@@ -7,11 +7,10 @@ const openSource = el("openSource");
 const inputErr = el("inputErr");
 const copyStatus = el("copyStatus");
 
-const STORAGE_KEY = "yt_obsidian_webapp_model";
-const WIKI_STORAGE_KEY = "yt_obsidian_webapp_wiki_model";
-
 const selectedWikiTerms = [];
 const selectedWikiBusinesses = [];
+
+let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "gpt-4o-mini" };
 let wikiTermSuggestionTimer = null;
 let wikiBusinessSuggestionTimer = null;
 let wikiTermSuggestionRequestId = 0;
@@ -892,6 +891,75 @@ async function copyTextareaValue(textareaEl) {
   }
 }
 
+async function loadSettings() {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const resp = await fetch("/api/settings", { signal: ctrl.signal }).finally(() => clearTimeout(t));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    appSettings = data;
+    populateSettingsForm(data);
+  } catch { /* settings will use defaults */ }
+}
+
+function populateSettingsForm(data) {
+  el("settingNotePath").value = data.OBSIDIAN_NOTE_DIR || "";
+  el("settingDictPath").value = data.OBSIDIAN_DICTIONARY_DIR || "";
+  el("settingBizPath").value = data.OBSIDIAN_BUSINESS_DIR || "";
+  el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
+  el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
+  el("settingModel").value = data.OPENAI_MODEL || "gpt-4o-mini";
+  el("settingBdTimeout").value = data.BRIGHT_DATA_TIMEOUT_MS || 120000;
+}
+
+async function saveSettings() {
+  const errEl = el("settingsErr");
+  const okEl = el("settingsOk");
+  errEl.textContent = "";
+  okEl.textContent = "";
+
+  const payload = {
+    OBSIDIAN_NOTE_DIR: el("settingNotePath").value.trim(),
+    OBSIDIAN_DICTIONARY_DIR: el("settingDictPath").value.trim(),
+    OBSIDIAN_BUSINESS_DIR: el("settingBizPath").value.trim(),
+    OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
+    BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
+    OPENAI_MODEL: el("settingModel").value.trim() || "gpt-4o-mini",
+    BRIGHT_DATA_TIMEOUT_MS: el("settingBdTimeout").value.trim() || "120000",
+  };
+
+  try {
+    const resp = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text);
+    }
+    const data = await resp.json();
+    appSettings = data;
+    populateSettingsForm(data);
+    okEl.textContent = "Settings saved.";
+    setTimeout(() => { okEl.textContent = ""; }, 3000);
+  } catch (err) {
+    errEl.textContent = `Save failed: ${err.message}`;
+  }
+}
+
+function openSettings() {
+  populateSettingsForm(appSettings);
+  el("settingsOverlay").hidden = false;
+  el("settingsErr").textContent = "";
+  el("settingsOk").textContent = "";
+}
+
+function closeSettings() {
+  el("settingsOverlay").hidden = true;
+}
+
 function allPanelsSettled() {
   const badges = progressContainer.querySelectorAll(".badge");
   if (!badges.length) return true;
@@ -907,15 +975,15 @@ async function runYoutube() {
   inputErr.textContent = "";
   copyStatus.textContent = "";
 
-  const apiKey = el("apiKey").value.trim();
+  const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
   const videoUrlsRaw = el("videoUrl").value;
-  const model = el("model").value.trim() || "gpt-4o-mini";
+  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
   const videoUrls = parseVideoUrls(videoUrlsRaw);
 
   el("videoUrl").value = "";
 
   if (!apiKey) {
-    inputErr.textContent = "Please enter your OpenAI API key.";
+    inputErr.textContent = "Please set your OpenAI API key in Settings (gear icon).";
     return;
   }
 
@@ -929,7 +997,6 @@ async function runYoutube() {
   isProcessing = true;
   updateActionButtons();
 
-  localStorage.setItem(STORAGE_KEY, model);
   openSource.href = videoUrls[0];
   statusEl.textContent = `Running ${videoUrls.length} video${videoUrls.length === 1 ? "" : "s"}`;
 
@@ -962,13 +1029,13 @@ async function runWikipedia() {
   inputErr.textContent = "";
   copyStatus.textContent = "";
 
-  const apiKey = el("wikiApiKey").value.trim();
-  const model = el("wikiModel").value.trim() || "gpt-4o-mini";
+  const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
+  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
   const terms = [...selectedWikiTerms];
   const businesses = [...selectedWikiBusinesses];
 
   if (!apiKey) {
-    inputErr.textContent = "Please enter your OpenAI API key.";
+    inputErr.textContent = "Please set your OpenAI API key in Settings (gear icon).";
     return;
   }
 
@@ -981,8 +1048,6 @@ async function runWikipedia() {
 
   isProcessing = true;
   updateActionButtons();
-
-  localStorage.setItem(WIKI_STORAGE_KEY, model);
   const totalCount = terms.length + businesses.length;
   statusEl.textContent = `Running ${totalCount} item${totalCount === 1 ? "" : "s"}`;
   const firstLabel = terms[0] || businesses[0] || "Wikipedia";
@@ -1016,11 +1081,11 @@ async function runWikipedia() {
 async function retryFailed() {
   if (!failedVideoUrls.length || isProcessing) return;
 
-  const apiKey = el("apiKey").value.trim();
-  const model = el("model").value.trim() || "gpt-4o-mini";
+  const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
+  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
 
   if (!apiKey) {
-    inputErr.textContent = "Please enter your OpenAI API key.";
+    inputErr.textContent = "Please set your OpenAI API key in Settings (gear icon).";
     return;
   }
 
@@ -1178,10 +1243,14 @@ document.addEventListener("click", (event) => {
   }
 });
 
+el("settingsBtn").addEventListener("click", openSettings);
+el("settingsClose").addEventListener("click", closeSettings);
+el("settingsSave").addEventListener("click", saveSettings);
+el("settingsOverlay").addEventListener("click", (event) => {
+  if (event.target === el("settingsOverlay")) closeSettings();
+});
+
 window.addEventListener("load", () => {
-  const savedModel = localStorage.getItem(STORAGE_KEY);
-  const savedWikiModel = localStorage.getItem(WIKI_STORAGE_KEY);
-  if (savedModel) el("model").value = savedModel;
-  if (savedWikiModel) el("wikiModel").value = savedWikiModel;
+  loadSettings();
   setActiveTab(activeTab);
 });
