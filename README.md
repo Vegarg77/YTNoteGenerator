@@ -1,10 +1,14 @@
 # YT Note Generator
 
-Generate Obsidian-ready notes from YouTube videos by combining transcript extraction + OpenAI cleanup/summarization.
+Generate Obsidian-ready notes from YouTube videos and Wikipedia articles by combining transcript/article extraction + OpenAI cleanup/summarization.
 
 ---
 
 ## What the project does
+
+The app has two main modes, accessible via a tabbed web interface:
+
+### YouTube Notes
 
 For each video, the app:
 
@@ -19,22 +23,26 @@ For each video, the app:
   - Source video link
   - `#VN` tag
 
+### Wikipedia Notes
+
+- **Dictionary notes**: Search Wikipedia terms with autocomplete, then generate Obsidian dictionary entries with YAML frontmatter.
+- **Business notes**: Extract business/organization info (founders, headquarters, offerings) from Wikipedia into structured notes.
+
 ---
 
 ## Architecture
 
-- `server.js`: Serves `webapp/` static files and API routes.
-- `GET /api/transcript`: Pulls transcript data through Bright Data dataset API (trigger → poll → snapshot).
-- `POST /api/save-note`: Saves generated Markdown note to local disk.
-- `webapp/app.js`: Handles multi-video batch processing, OpenAI calls, progress cards, and copy UX.
+- `server.js`: Serves `webapp/` static files and API routes (transcript fetching, note saving, Wikipedia proxy, settings management). Zero npm dependencies — uses only Node.js built-in modules.
+- `webapp/app.js`: Handles multi-video and Wikipedia batch processing, OpenAI calls (Chat Completions + Responses API), progress cards, retry logic, and copy UX.
+- `webapp/index.html` + `webapp/styles.css`: Tabbed UI for YouTube and Wikipedia workflows.
 
 ---
 
 ## Requirements
 
-- Node.js 18+ (built-in `fetch` is used by `server.js`).
-- OpenAI API key.
-- Bright Data dataset API credentials for transcript retrieval:
+- Node.js 18+ (built-in `fetch` is used — no npm dependencies).
+- OpenAI API key (can be set via settings panel or provided at runtime).
+- Bright Data dataset API credentials for YouTube transcript retrieval:
   - `BRIGHT_DATA_API_TOKEN`
   - `BRIGHT_DATA_YT_DATASET_ID`
 
@@ -57,26 +65,27 @@ cp .env.example .env
 Set required values:
 
 ```env
+OPENAI_API_KEY=your-openai-api-key
 BRIGHT_DATA_API_TOKEN=...
 BRIGHT_DATA_YT_DATASET_ID=...
 ```
 
 Optional overrides supported by the server:
 
+- `OPENAI_MODEL` (default `gpt-4o-mini`)
 - `PORT` (default `5173`)
 - `BRIGHT_DATA_API_BASE` (default `https://api.brightdata.com`)
 - `BRIGHT_DATA_TIMEOUT_MS` (default `120000`)
 - `BRIGHT_DATA_POLL_INTERVAL_MS` (default `2000`)
+- `OBSIDIAN_NOTE_DIR` — directory for saved video notes
+- `OBSIDIAN_DICTIONARY_DIR` — directory for saved dictionary notes
+- `OBSIDIAN_BUSINESS_DIR` — directory for saved business notes
 
-### 2) (Important) Adjust note-save location
+Most of these can also be changed at runtime through the in-app settings panel.
 
-`server.js` currently writes saved notes to a hardcoded directory:
+### 2) (Important) Adjust note-save locations
 
-```js
-const OBSIDIAN_NOTE_DIR = "G:\\My Drive\\GigaVault\\Video Notes (unsorted)";
-```
-
-Update this constant to a valid folder on your machine before relying on `/api/save-note`.
+Set `OBSIDIAN_NOTE_DIR`, `OBSIDIAN_DICTIONARY_DIR`, and `OBSIDIAN_BUSINESS_DIR` in your `.env` file to valid directories on your machine, or configure them through the in-app settings panel (gear icon).
 
 ---
 
@@ -92,13 +101,23 @@ Open:
 
 - `http://localhost:5173/`
 
-Usage:
+The server listens on `0.0.0.0`, so it is accessible from other machines on the network.
+
+### YouTube tab
 
 1. Paste one or more YouTube URLs (spaces/newlines/comma separated).
-2. Enter your OpenAI API key (used in-memory for that run).
+2. Enter your OpenAI API key (or set it in settings).
 3. Choose model (default `gpt-4o-mini`; GPT-5 family routes through the Responses API path).
 4. Click **Generate Obsidian Note**.
 5. Copy combined markdown output and/or use saved files from the configured note directory.
+6. Use **Retry Failed** to re-process any videos that failed.
+
+### Wikipedia tab
+
+1. Search for a term using the autocomplete search box.
+2. Select one or more terms or businesses from suggestions.
+3. Click **Generate** to create dictionary or business notes.
+4. Copy or save the generated markdown.
 
 ---
 
@@ -107,7 +126,7 @@ Usage:
 ### `GET /api/transcript?url=<youtube_url>`
 
 - Resolves video id from URL.
-- Calls Bright Data dataset API.
+- Calls Bright Data dataset API (trigger → poll → snapshot).
 - Returns transcript + metadata.
 
 ### `POST /api/save-note`
@@ -122,7 +141,23 @@ Request JSON:
 ```
 
 - Sanitizes filename from title.
-- Writes `.md` file into configured `OBSIDIAN_NOTE_DIR`.
+- Writes `.md` file into configured `OBSIDIAN_NOTE_DIR` with collision detection.
+
+### `GET /api/wikipedia-suggest?q=<query>`
+
+- Returns autocomplete suggestions from the Wikipedia API.
+
+### `GET /api/wikipedia-page?title=<title>`
+
+- Fetches the full content of a Wikipedia article.
+
+### `GET /api/settings`
+
+- Returns current application configuration.
+
+### `POST /api/settings`
+
+- Updates application settings and persists them to `.env`.
 
 ---
 
@@ -152,9 +187,24 @@ Request JSON:
 
 ## Repository map
 
-- `server.js` – local server + API
-- `webapp/` – web app UI
-- `scripts/fetch_transcript.py` – optional Python transcript utility
+- `server.js` – local server + API (zero npm dependencies)
+- `webapp/index.html` – tabbed web UI structure
+- `webapp/app.js` – frontend logic (YouTube + Wikipedia processing, OpenAI integration)
+- `webapp/styles.css` – UI styles
+- `scripts/fetch_transcript.py` – optional Python transcript utility (legacy)
+- `.env.example` – environment variable template
+
+---
+
+## Project status
+
+The core YouTube-to-Obsidian note pipeline is fully functional. Recent additions include:
+
+- **Wikipedia integration** — dictionary and business note generation from Wikipedia articles.
+- **Settings panel** — in-app gear icon to configure API keys, model, and save directories without editing `.env` manually.
+- **Network accessibility** — server binds to `0.0.0.0` so it can be accessed from other devices on the LAN.
+- **Retry failed** — re-process any videos/terms that failed during a batch run.
+- **GPT-5 support** — routes GPT-5 family models through the OpenAI Responses API.
 
 ---
 
