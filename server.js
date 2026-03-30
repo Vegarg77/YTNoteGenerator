@@ -325,6 +325,12 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   };
 }
 
+// Retry constants for timed-out snapshots (shared with request deadline)
+const SNAPSHOT_RETRY_INTERVAL_MS = 60000;
+const SNAPSHOT_MAX_RETRIES = 3;
+// Grace period per retry to cover the progress-API HTTP round-trip
+const SNAPSHOT_RETRY_GRACE_MS = 15000;
+
 async function waitForPollInterval(signal, pollMs) {
   await new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, pollMs);
@@ -352,6 +358,32 @@ async function pollBrightDataSnapshot(snapshotId, signal, cfg) {
     }
 
     await waitForPollInterval(signal, cfg.BRIGHT_DATA_POLL_INTERVAL_MS);
+  }
+
+  // Snapshot not ready within normal timeout — retry 3 times at 60-second intervals
+  // in case the snapshot is still processing and becomes available shortly after
+  const RETRY_INTERVAL_MS = SNAPSHOT_RETRY_INTERVAL_MS;
+  const MAX_RETRIES = SNAPSHOT_MAX_RETRIES;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    console.log(`[${new Date().toLocaleTimeString()}] Snapshot ${snapshotId} timed out — retry ping ${attempt}/${MAX_RETRIES} in 60s`);
+    await waitForPollInterval(signal, RETRY_INTERVAL_MS);
+
+    const progressUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/progress/${encodeURIComponent(snapshotId)}`;
+    const progress = await fetchJson(progressUrl, {
+      headers: { Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}` },
+      signal
+    });
+
+    const status = String(progress?.status || "").toLowerCase();
+    if (status === "ready" || status === "completed" || status === "success") {
+      console.log(`[${new Date().toLocaleTimeString()}] Snapshot ${snapshotId} became ready on retry ping ${attempt}`);
+      return;
+    }
+
+    if (status === "failed" || status === "error" || status === "cancelled") {
+      throw new Error(`Bright Data snapshot ${snapshotId} failed with status: ${progress?.status || "unknown"}`);
+    }
   }
 
   throw new Error(`Timed out waiting for Bright Data snapshot ${snapshotId}`);
@@ -489,7 +521,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + 5000);
+    // Normal timeout + retry pings (sleep + HTTP headroom each) + grace for the initial trigger & snapshot fetch
+    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
 
     try {
       const { text, source, metadata } = await fetchTranscriptBundle(videoId, rawUrl, ctrl.signal);
