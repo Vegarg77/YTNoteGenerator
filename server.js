@@ -354,6 +354,32 @@ async function pollBrightDataSnapshot(snapshotId, signal, cfg) {
     await waitForPollInterval(signal, cfg.BRIGHT_DATA_POLL_INTERVAL_MS);
   }
 
+  // Snapshot not ready within normal timeout — retry 3 times at 60-second intervals
+  // in case the snapshot is still processing and becomes available shortly after
+  const RETRY_INTERVAL_MS = 60000;
+  const MAX_RETRIES = 3;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    console.log(`[${new Date().toLocaleTimeString()}] Snapshot ${snapshotId} timed out — retry ping ${attempt}/${MAX_RETRIES} in 60s`);
+    await waitForPollInterval(signal, RETRY_INTERVAL_MS);
+
+    const progressUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/progress/${encodeURIComponent(snapshotId)}`;
+    const progress = await fetchJson(progressUrl, {
+      headers: { Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}` },
+      signal
+    });
+
+    const status = String(progress?.status || "").toLowerCase();
+    if (status === "ready" || status === "completed" || status === "success") {
+      console.log(`[${new Date().toLocaleTimeString()}] Snapshot ${snapshotId} became ready on retry ping ${attempt}`);
+      return;
+    }
+
+    if (status === "failed" || status === "error" || status === "cancelled") {
+      throw new Error(`Bright Data snapshot ${snapshotId} failed with status: ${progress?.status || "unknown"}`);
+    }
+  }
+
   throw new Error(`Timed out waiting for Bright Data snapshot ${snapshotId}`);
 }
 
@@ -489,7 +515,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + 5000);
+    // Allow extra 3 minutes (3 retry pings × 60s) + 5s grace period beyond the normal timeout
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + 180000 + 5000);
 
     try {
       const { text, source, metadata } = await fetchTranscriptBundle(videoId, rawUrl, ctrl.signal);
