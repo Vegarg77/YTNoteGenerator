@@ -325,6 +325,12 @@ function parseBrightDataItem(item, fallbackUrl, fallbackVideoId) {
   };
 }
 
+// Retry constants for timed-out snapshots (shared with request deadline)
+const SNAPSHOT_RETRY_INTERVAL_MS = 60000;
+const SNAPSHOT_MAX_RETRIES = 3;
+// Grace period per retry to cover the progress-API HTTP round-trip
+const SNAPSHOT_RETRY_GRACE_MS = 15000;
+
 async function waitForPollInterval(signal, pollMs) {
   await new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, pollMs);
@@ -356,8 +362,8 @@ async function pollBrightDataSnapshot(snapshotId, signal, cfg) {
 
   // Snapshot not ready within normal timeout — retry 3 times at 60-second intervals
   // in case the snapshot is still processing and becomes available shortly after
-  const RETRY_INTERVAL_MS = 60000;
-  const MAX_RETRIES = 3;
+  const RETRY_INTERVAL_MS = SNAPSHOT_RETRY_INTERVAL_MS;
+  const MAX_RETRIES = SNAPSHOT_MAX_RETRIES;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     console.log(`[${new Date().toLocaleTimeString()}] Snapshot ${snapshotId} timed out — retry ping ${attempt}/${MAX_RETRIES} in 60s`);
@@ -515,8 +521,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    // Allow extra 3 minutes (3 retry pings × 60s) + 5s grace period beyond the normal timeout
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + 180000 + 5000);
+    // Normal timeout + retry pings (sleep + HTTP headroom each) + grace for the initial trigger & snapshot fetch
+    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
 
     try {
       const { text, source, metadata } = await fetchTranscriptBundle(videoId, rawUrl, ctrl.signal);
