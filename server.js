@@ -490,7 +490,7 @@ async function getWikipediaSuggestions(query, signal) {
 
 async function getWikipediaPage(title, signal) {
   const pageUrl =
-    `https://en.wikipedia.org/w/api.php?action=query&prop=extracts&format=json&formatversion=2&redirects=1&explaintext=1&titles=${encodeURIComponent(title)}`;
+    `https://en.wikipedia.org/w/api.php?action=query&prop=extracts|coordinates&format=json&formatversion=2&redirects=1&explaintext=1&titles=${encodeURIComponent(title)}`;
   const rawText = await fetchText(pageUrl, { signal });
   const payload = JSON.parse(rawText || "{}");
   const page = payload?.query?.pages?.[0] || {};
@@ -498,10 +498,18 @@ async function getWikipediaPage(title, signal) {
   const extract = asTrimmedString(page?.extract);
   const urlTitle = resolvedTitle.replace(/\s+/g, "_");
 
+  const coords = Array.isArray(page?.coordinates) && page.coordinates.length > 0
+    ? page.coordinates[0]
+    : null;
+  const location = coords && typeof coords.lat === "number" && typeof coords.lon === "number"
+    ? { lat: coords.lat, lon: coords.lon }
+    : null;
+
   return {
     title: resolvedTitle,
     extract,
-    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`
+    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`,
+    location
   };
 }
 

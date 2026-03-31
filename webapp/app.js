@@ -49,13 +49,16 @@ function buildVideoNoteMarkdown({ date, time, channel, summary, fixedTranscript,
   ].join("\n");
 }
 
-function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) {
+function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl, location }) {
   const body = (structuredContent || "").trim();
+  const frontmatterLines = ["---", "aliases: []"];
+  if (location) {
+    frontmatterLines.push(`location: ${location.lat}, ${location.lon}`);
+  }
+  frontmatterLines.push("---");
 
   return [
-    "---",
-    "aliases: []",
-    "---",
+    ...frontmatterLines,
     "",
     `#### ${date}`,
     "",
@@ -70,12 +73,18 @@ function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl }) 
   ].join("\n");
 }
 
-function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl }) {
+function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl, location }) {
   const cleanOfferings = Array.isArray(offerings) ? offerings.filter(Boolean) : [];
   const offeringsLines = cleanOfferings.length ? cleanOfferings.map((item) => `- ${item}`) : ["- N/A"];
 
+  const lines = [];
+  if (location) {
+    lines.push("---", `location: ${location.lat}, ${location.lon}`, "---", "");
+  }
+  lines.push(`#### ${date}  ${time}`);
+
   return [
-    `#### ${date}  ${time}`,
+    ...lines,
     "",
     `## Founded by: ${foundedBy || "N/A"}`,
     "",
@@ -610,7 +619,8 @@ ${extract.slice(0, 180000)}`
     date,
     title: articleTitle,
     structuredContent: normalizeDictionaryContent(structuredContent),
-    sourceUrl: articleUrl
+    sourceUrl: articleUrl,
+    location: wikiData?.location || null
   });
 
   panel.setProgress("Saving note file…", 92);
@@ -701,7 +711,8 @@ ${extract.slice(0, 180000)}`
     headquarters: parsed.headquarters,
     summary: parsed.summary,
     offerings: parsed.offerings,
-    sourceUrl: articleUrl
+    sourceUrl: articleUrl,
+    location: wikiData?.location || null
   });
 
   panel.setProgress("Saving note file…", 92);
