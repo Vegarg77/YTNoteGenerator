@@ -1,0 +1,22 @@
+{
+  "name": "ytnotegenerator",
+  "version": "1.0.0",
+  "description": "Generate Obsidian-ready notes from YouTube videos and Wikipedia articles by combining transcript/article extraction + OpenAI cleanup/summarization.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vegarg77/YTNoteGenerator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Vegarg77/YTNoteGenerator/issues"
+  },
+  "homepage": "https://github.com/Vegarg77/YTNoteGenerator#readme"
+}
