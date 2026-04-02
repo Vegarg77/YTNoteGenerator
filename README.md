@@ -91,17 +91,45 @@ Set `OBSIDIAN_NOTE_DIR`, `OBSIDIAN_DICTIONARY_DIR`, and `OBSIDIAN_BUSINESS_DIR` 
 
 ## Run
 
+### Local
+
 Start server:
 
 ```bash
 node server.js
 ```
 
-Open:
+Open `http://localhost:5173/`. The server listens on `0.0.0.0`, so it is accessible from other machines on the network.
 
-- `http://localhost:5173/`
+### Docker
 
-The server listens on `0.0.0.0`, so it is accessible from other machines on the network.
+Build the image:
+
+```bash
+docker build -t ytnotegenerator .
+```
+
+Run the container:
+
+```bash
+docker run -d \
+    -p 5173:5173 \
+    --name=ytnotegenerator \
+    -v /path/to/notes:/data/notes \
+    -v /path/to/dictionary:/data/dictionary \
+    -v /path/to/business:/data/business \
+    -v /etc/localtime:/etc/localtime:ro \
+    -e OPENAI_API_KEY=your-openai-api-key \
+    -e OPENAI_MODEL=gpt-4o-mini \
+    -e BRIGHT_DATA_API_TOKEN=your-bright-data-token \
+    -e BRIGHT_DATA_YT_DATASET_ID=your-dataset-id \
+    -e OBSIDIAN_NOTE_DIR=/data/notes \
+    -e OBSIDIAN_DICTIONARY_DIR=/data/dictionary \
+    -e OBSIDIAN_BUSINESS_DIR=/data/business \
+    ytnotegenerator
+```
+
+Replace the `/path/to/...` volume mounts with directories on your host where you want notes saved. A ready-to-edit version of this command is available in `docker-run.sh`.
 
 ### YouTube tab
 
@@ -193,6 +221,9 @@ Request JSON:
 - `webapp/styles.css` – UI styles
 - `scripts/fetch_transcript.py` – optional Python transcript utility (legacy)
 - `.env.example` – environment variable template
+- `Dockerfile` – container image definition (Node.js + Python)
+- `docker-run.sh` – ready-to-edit `docker run` command
+- `.dockerignore` – files excluded from the Docker build context
 
 ---
 
@@ -205,6 +236,7 @@ The core YouTube-to-Obsidian note pipeline is fully functional. Recent additions
 - **Network accessibility** — server binds to `0.0.0.0` so it can be accessed from other devices on the LAN.
 - **Retry failed** — re-process any videos/terms that failed during a batch run.
 - **GPT-5 support** — routes GPT-5 family models through the OpenAI Responses API.
+- **Docker support** — run the app as a container with environment variables and volume mounts for note storage.
 
 ---
 
