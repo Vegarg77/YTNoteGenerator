@@ -42,9 +42,10 @@ For each video, the app:
 
 - Node.js 18+ (built-in `fetch` is used — no npm dependencies).
 - OpenAI API key (can be set via settings panel or provided at runtime).
-- Bright Data dataset API credentials for YouTube transcript retrieval:
+- Bright Data dataset API credentials for YouTube transcripts and Wikipedia lookups:
   - `BRIGHT_DATA_API_TOKEN`
   - `BRIGHT_DATA_YT_DATASET_ID`
+  - `BRIGHT_DATA_WIKI_DATASET_ID` (defaults to `gd_lr9978962kkjr3nx49`)
 
 Optional Python helper dependency (legacy/utility script):
 
@@ -68,6 +69,7 @@ Set required values:
 OPENAI_API_KEY=your-openai-api-key
 BRIGHT_DATA_API_TOKEN=...
 BRIGHT_DATA_YT_DATASET_ID=...
+BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49
 ```
 
 Optional overrides supported by the server:
@@ -123,6 +125,7 @@ docker run -d \
     -e OPENAI_MODEL=gpt-4o-mini \
     -e BRIGHT_DATA_API_TOKEN=your-bright-data-token \
     -e BRIGHT_DATA_YT_DATASET_ID=your-dataset-id \
+    -e BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49 \
     -e OBSIDIAN_NOTE_DIR=/data/notes \
     -e OBSIDIAN_DICTIONARY_DIR=/data/dictionary \
     -e OBSIDIAN_BUSINESS_DIR=/data/business \
@@ -173,11 +176,11 @@ Request JSON:
 
 ### `GET /api/wikipedia-suggest?q=<query>`
 
-- Returns autocomplete suggestions from the Wikipedia API.
+- Returns autocomplete suggestions for Wikipedia articles via the Bright Data Wikipedia dataset.
 
 ### `GET /api/wikipedia-page?title=<title>`
 
-- Fetches the full content of a Wikipedia article.
+- Fetches the full content of a Wikipedia article via the Bright Data Wikipedia dataset.
 
 ### `GET /api/settings`
 

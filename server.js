@@ -39,6 +39,7 @@ function getConfig() {
     OPENAI_MODEL: (process.env.OPENAI_MODEL || "gpt-4o-mini").trim(),
     BRIGHT_DATA_API_TOKEN: (process.env.BRIGHT_DATA_API_TOKEN || "").trim(),
     BRIGHT_DATA_YT_DATASET_ID: (process.env.BRIGHT_DATA_YT_DATASET_ID || "").trim(),
+    BRIGHT_DATA_WIKI_DATASET_ID: (process.env.BRIGHT_DATA_WIKI_DATASET_ID || "gd_lr9978962kkjr3nx49").trim(),
     BRIGHT_DATA_API_BASE: (process.env.BRIGHT_DATA_API_BASE || "https://api.brightdata.com").replace(/\/$/, ""),
     BRIGHT_DATA_TIMEOUT_MS: Number(process.env.BRIGHT_DATA_TIMEOUT_MS) || 120000,
     BRIGHT_DATA_POLL_INTERVAL_MS: Number(process.env.BRIGHT_DATA_POLL_INTERVAL_MS) || 2000,
@@ -78,7 +79,7 @@ function reloadEnv() {
   const settingsKeys = [
     "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
     "OPENAI_API_KEY", "OPENAI_MODEL",
-    "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_YT_DATASET_ID",
+    "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_YT_DATASET_ID", "BRIGHT_DATA_WIKI_DATASET_ID",
     "BRIGHT_DATA_API_BASE", "BRIGHT_DATA_TIMEOUT_MS", "BRIGHT_DATA_POLL_INTERVAL_MS"
   ];
   for (const key of settingsKeys) {
@@ -472,44 +473,123 @@ function serveStatic(req, res) {
   });
 }
 
-async function getWikipediaSuggestions(query, signal) {
-  const suggestionUrl =
-    `https://en.wikipedia.org/w/api.php?action=opensearch&limit=10&namespace=0&format=json&search=${encodeURIComponent(query)}`;
-  const rawText = await fetchText(suggestionUrl, { signal });
-  const payload = JSON.parse(rawText || "[]");
-  const titles = Array.isArray(payload?.[1]) ? payload[1] : [];
-  const descriptions = Array.isArray(payload?.[2]) ? payload[2] : [];
-  const urls = Array.isArray(payload?.[3]) ? payload[3] : [];
+function validateBrightDataWikiConfig(cfg) {
+  const missing = [];
+  if (!cfg.BRIGHT_DATA_API_TOKEN) missing.push("BRIGHT_DATA_API_TOKEN");
+  if (!cfg.BRIGHT_DATA_WIKI_DATASET_ID) missing.push("BRIGHT_DATA_WIKI_DATASET_ID");
+  if (missing.length) {
+    throw new Error(`Missing Bright Data env vars: ${missing.join(", ")}`);
+  }
+}
 
-  return titles.map((title, idx) => ({
-    title: asTrimmedString(title),
-    description: asTrimmedString(descriptions[idx]),
-    url: asTrimmedString(urls[idx])
-  })).filter((entry) => entry.title);
+function pickFirstStringByKeys(item, keys) {
+  for (const key of keys) {
+    const val = item?.[key];
+    if (val == null) continue;
+    const str = typeof val === "string" ? val.trim() : extractNestedString(val);
+    if (str) return str;
+  }
+  return "";
+}
+
+function extractWikiCoordinates(item) {
+  const candidates = [
+    item?.coordinates,
+    item?.location,
+    item?.geo,
+    item?.geo_coordinates,
+    item?.coords
+  ].filter(Boolean);
+
+  for (const cand of candidates) {
+    const lat = Number(cand?.lat ?? cand?.latitude ?? cand?.[0]);
+    const lon = Number(cand?.lon ?? cand?.lng ?? cand?.longitude ?? cand?.[1]);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      return { lat, lon };
+    }
+  }
+
+  const lat = Number(item?.latitude);
+  const lon = Number(item?.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return { lat, lon };
+  }
+  return null;
+}
+
+function parseBrightDataWikiItem(item) {
+  const title = pickFirstStringByKeys(item, ["title", "page_title", "name", "header_title", "article_title"]);
+  const url = pickFirstStringByKeys(item, ["url", "page_url", "link", "input_url", "wiki_url"]);
+  const description = pickFirstStringByKeys(item, ["description", "summary", "short_description", "subtitle", "snippet"]);
+  const extract = pickFirstStringByKeys(item, [
+    "text", "content", "extract", "body", "article_text", "overview", "main_text", "page_text", "plain_text"
+  ]);
+  const location = extractWikiCoordinates(item);
+
+  return { title, url, description, extract, location };
+}
+
+async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
+  const cfg = getConfig();
+  validateBrightDataWikiConfig(cfg);
+
+  const scrapeUrl =
+    `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/scrape` +
+    `?dataset_id=${encodeURIComponent(cfg.BRIGHT_DATA_WIKI_DATASET_ID)}` +
+    `&notify=false&include_errors=true&type=discover_new&discover_by=keyword`;
+
+  const data = await fetchJson(scrapeUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ input: [{ keyword, pages_load: pagesLoad }] }),
+    signal
+  });
+
+  const items = Array.isArray(data)
+    ? data
+    : (Array.isArray(data?.data) ? data.data : (Array.isArray(data?.results) ? data.results : []));
+
+  return items
+    .map(parseBrightDataWikiItem)
+    .filter((entry) => entry.title || entry.url || entry.extract);
+}
+
+async function getWikipediaSuggestions(query, signal) {
+  const items = await brightDataWikipediaScrape(query, 1, signal);
+
+  return items.map((item) => {
+    const title = item.title || query;
+    const urlTitle = title.replace(/\s+/g, "_");
+    return {
+      title,
+      description: item.description || "Wikipedia article",
+      url: item.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`
+    };
+  }).filter((entry) => entry.title);
 }
 
 async function getWikipediaPage(title, signal) {
-  const pageUrl =
-    `https://en.wikipedia.org/w/api.php?action=query&prop=extracts|coordinates&format=json&formatversion=2&redirects=1&explaintext=1&titles=${encodeURIComponent(title)}`;
-  const rawText = await fetchText(pageUrl, { signal });
-  const payload = JSON.parse(rawText || "{}");
-  const page = payload?.query?.pages?.[0] || {};
-  const resolvedTitle = asTrimmedString(page?.title) || title;
-  const extract = asTrimmedString(page?.extract);
-  const urlTitle = resolvedTitle.replace(/\s+/g, "_");
+  const items = await brightDataWikipediaScrape(title, 1, signal);
 
-  const coords = Array.isArray(page?.coordinates) && page.coordinates.length > 0
-    ? page.coordinates[0]
-    : null;
-  const location = coords && typeof coords.lat === "number" && typeof coords.lon === "number"
-    ? { lat: coords.lat, lon: coords.lon }
-    : null;
+  const normalized = title.trim().toLowerCase();
+  const exact = items.find((item) => (item.title || "").trim().toLowerCase() === normalized);
+  const match = exact || items[0];
+
+  if (!match) {
+    throw new Error(`Bright Data returned no Wikipedia results for "${title}"`);
+  }
+
+  const resolvedTitle = match.title || title;
+  const urlTitle = resolvedTitle.replace(/\s+/g, "_");
 
   return {
     title: resolvedTitle,
-    extract,
-    url: `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`,
-    location
+    extract: match.extract || match.description || "",
+    url: match.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`,
+    location: match.location || null
   };
 }
 
@@ -607,7 +687,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS);
     try {
       const suggestions = await getWikipediaSuggestions(query, ctrl.signal);
       sendJson(res, 200, { suggestions });
@@ -632,7 +712,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS);
     try {
       const page = await getWikipediaPage(title, ctrl.signal);
       sendJson(res, 200, page);
