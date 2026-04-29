@@ -556,7 +556,13 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
 
 async function processWikipediaTerm({ apiKey, model, term, panel }) {
   panel.setProgress("Loading Wikipedia article", 15);
-  const wikiData = await fetchWikipediaPage(term);
+  const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
+  let wikiData;
+  try {
+    wikiData = await fetchWikipediaPage(term);
+  } finally {
+    stopHeartbeat(fetchHb);
+  }
   const articleTitle = wikiData?.title || term;
   const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
   const extract = wikiData?.extract || "";
@@ -642,7 +648,13 @@ ${extract.slice(0, 180000)}`
 
 async function processWikipediaBusiness({ apiKey, model, term, panel }) {
   panel.setProgress("Loading Wikipedia article", 15);
-  const wikiData = await fetchWikipediaPage(term);
+  const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
+  let wikiData;
+  try {
+    wikiData = await fetchWikipediaPage(term);
+  } finally {
+    stopHeartbeat(fetchHb);
+  }
   const articleTitle = wikiData?.title || term;
   const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
   const extract = wikiData?.extract || "";
