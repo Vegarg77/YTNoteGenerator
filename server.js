@@ -521,9 +521,18 @@ function parseBrightDataWikiItem(item) {
   const title = pickFirstStringByKeys(item, ["title", "page_title", "name", "header_title", "article_title"]);
   const url = pickFirstStringByKeys(item, ["url", "page_url", "link", "input_url", "wiki_url"]);
   const description = pickFirstStringByKeys(item, ["description", "summary", "short_description", "subtitle", "snippet"]);
-  const extract = pickFirstStringByKeys(item, [
-    "text", "content", "extract", "body", "article_text", "overview", "main_text", "page_text", "plain_text"
+  let extract = pickFirstStringByKeys(item, [
+    "raw_text", "text", "content", "extract", "body", "article_text", "overview", "main_text", "page_text", "plain_text"
   ]);
+  if (!extract && Array.isArray(item?.cataloged_text)) {
+    for (const entry of item.cataloged_text) {
+      const candidate = pickFirstStringByKeys(entry, ["text", "content", "raw_text"]);
+      if (candidate) {
+        extract = candidate;
+        break;
+      }
+    }
+  }
   const location = extractWikiCoordinates(item);
 
   return { title, url, description, extract, location };
