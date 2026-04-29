@@ -533,12 +533,12 @@ async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
   const cfg = getConfig();
   validateBrightDataWikiConfig(cfg);
 
-  const scrapeUrl =
-    `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/scrape` +
+  const triggerUrl =
+    `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/trigger` +
     `?dataset_id=${encodeURIComponent(cfg.BRIGHT_DATA_WIKI_DATASET_ID)}` +
     `&notify=false&include_errors=true&type=discover_new&discover_by=keyword`;
 
-  const data = await fetchJson(scrapeUrl, {
+  const triggerResp = await fetchJson(triggerUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}`,
@@ -548,9 +548,22 @@ async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
     signal
   });
 
-  const items = Array.isArray(data)
-    ? data
-    : (Array.isArray(data?.data) ? data.data : (Array.isArray(data?.results) ? data.results : []));
+  const snapshotId = parseBrightDataTriggerResponse(triggerResp);
+  if (!snapshotId) {
+    throw new Error("Bright Data Wikipedia trigger did not return a snapshot id");
+  }
+
+  await pollBrightDataSnapshot(snapshotId, signal, cfg);
+
+  const snapshotUrl = `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/snapshot/${encodeURIComponent(snapshotId)}?format=json`;
+  const snapshotData = await fetchJson(snapshotUrl, {
+    headers: { Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}` },
+    signal
+  });
+
+  const items = Array.isArray(snapshotData)
+    ? snapshotData
+    : (Array.isArray(snapshotData?.data) ? snapshotData.data : (Array.isArray(snapshotData?.results) ? snapshotData.results : []));
 
   return items
     .map(parseBrightDataWikiItem)
@@ -687,7 +700,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS);
+    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
     try {
       const suggestions = await getWikipediaSuggestions(query, ctrl.signal);
       sendJson(res, 200, { suggestions });
@@ -712,7 +726,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS);
+    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
+    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
     try {
       const page = await getWikipediaPage(title, ctrl.signal);
       sendJson(res, 200, page);
