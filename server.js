@@ -529,14 +529,14 @@ function parseBrightDataWikiItem(item) {
   return { title, url, description, extract, location };
 }
 
-async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
+async function brightDataWikipediaScrape(articleUrl, signal) {
   const cfg = getConfig();
   validateBrightDataWikiConfig(cfg);
 
   const triggerUrl =
     `${cfg.BRIGHT_DATA_API_BASE}/datasets/v3/trigger` +
     `?dataset_id=${encodeURIComponent(cfg.BRIGHT_DATA_WIKI_DATASET_ID)}` +
-    `&notify=false&include_errors=true&type=discover_new&discover_by=keyword`;
+    `&notify=false&include_errors=true`;
 
   const triggerResp = await fetchJson(triggerUrl, {
     method: "POST",
@@ -544,7 +544,7 @@ async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
       Authorization: `Bearer ${cfg.BRIGHT_DATA_API_TOKEN}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ input: [{ keyword, pages_load: pagesLoad }] }),
+    body: JSON.stringify({ input: [{ url: articleUrl }] }),
     signal
   });
 
@@ -588,7 +588,9 @@ async function getWikipediaSuggestions(query, signal) {
 
 async function getWikipediaPage(title, signal) {
   const trimmedTitle = title.trim();
-  const items = await brightDataWikipediaScrape(trimmedTitle, 5, signal);
+  const urlTitle = trimmedTitle.replace(/\s+/g, "_");
+  const articleUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`;
+  const items = await brightDataWikipediaScrape(articleUrl, signal);
 
   if (!items.length) {
     throw new Error(`Bright Data returned no Wikipedia results for "${trimmedTitle}"`);
@@ -607,11 +609,9 @@ async function getWikipediaPage(title, signal) {
     }
   };
 
-  const match = items.find((item) => {
-    if (normalize(item.title) === wantTitle) return true;
-    if (slugFromUrl(item.url) === wantTitle) return true;
-    return false;
-  });
+  const match = items.find(
+    (item) => normalize(item.title) === wantTitle || slugFromUrl(item.url) === wantTitle
+  );
 
   if (!match) {
     const returned = items
@@ -624,12 +624,11 @@ async function getWikipediaPage(title, signal) {
   }
 
   const resolvedTitle = match.title || trimmedTitle;
-  const urlTitle = resolvedTitle.replace(/\s+/g, "_");
 
   return {
     title: resolvedTitle,
     extract: match.extract || match.description || "",
-    url: match.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`,
+    url: match.url || articleUrl,
     location: match.location || null
   };
 }
