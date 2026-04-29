@@ -609,12 +609,9 @@ async function getWikipediaPage(title, signal) {
     }
   };
 
-  // Direct URL collection should return exactly the requested article. Prefer an exact
-  // title/slug match; fall back to the first item if BD only returned one record (e.g. it
-  // followed a redirect and resolved to the canonical title).
-  const match =
-    items.find((item) => normalize(item.title) === wantTitle || slugFromUrl(item.url) === wantTitle) ||
-    (items.length === 1 ? items[0] : null);
+  const match = items.find(
+    (item) => normalize(item.title) === wantTitle || slugFromUrl(item.url) === wantTitle
+  );
 
   if (!match) {
     const returned = items
