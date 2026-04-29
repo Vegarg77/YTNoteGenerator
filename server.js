@@ -571,17 +571,19 @@ async function brightDataWikipediaScrape(keyword, pagesLoad, signal) {
 }
 
 async function getWikipediaSuggestions(query, signal) {
-  const items = await brightDataWikipediaScrape(query, 1, signal);
+  const suggestionUrl =
+    `https://en.wikipedia.org/w/api.php?action=opensearch&limit=10&namespace=0&format=json&search=${encodeURIComponent(query)}`;
+  const rawText = await fetchText(suggestionUrl, { signal });
+  const payload = JSON.parse(rawText || "[]");
+  const titles = Array.isArray(payload?.[1]) ? payload[1] : [];
+  const descriptions = Array.isArray(payload?.[2]) ? payload[2] : [];
+  const urls = Array.isArray(payload?.[3]) ? payload[3] : [];
 
-  return items.map((item) => {
-    const title = item.title || query;
-    const urlTitle = title.replace(/\s+/g, "_");
-    return {
-      title,
-      description: item.description || "Wikipedia article",
-      url: item.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`
-    };
-  }).filter((entry) => entry.title);
+  return titles.map((title, idx) => ({
+    title: asTrimmedString(title),
+    description: asTrimmedString(descriptions[idx]),
+    url: asTrimmedString(urls[idx])
+  })).filter((entry) => entry.title);
 }
 
 async function getWikipediaPage(title, signal) {
@@ -700,8 +702,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const ctrl = new AbortController();
-    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
-    const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
+    const timer = setTimeout(() => ctrl.abort(), 10000);
     try {
       const suggestions = await getWikipediaSuggestions(query, ctrl.signal);
       sendJson(res, 200, { suggestions });

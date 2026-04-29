@@ -176,7 +176,7 @@ Request JSON:
 
 ### `GET /api/wikipedia-suggest?q=<query>`
 
-- Returns autocomplete suggestions for Wikipedia articles via the Bright Data Wikipedia dataset.
+- Returns autocomplete suggestions from the Wikipedia opensearch API (kept direct to keep typeahead fast).
 
 ### `GET /api/wikipedia-page?title=<title>`
 
