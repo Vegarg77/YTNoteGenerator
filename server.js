@@ -586,18 +586,38 @@ async function getWikipediaSuggestions(query, signal) {
   })).filter((entry) => entry.title);
 }
 
-async function getWikipediaPage(title, signal) {
-  const trimmedTitle = title.trim();
+function validateWikipediaArticleUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid Wikipedia URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Wikipedia URL must use https");
+  }
+  if (!/^[a-z]{2,3}(-[a-z0-9]+)?\.wikipedia\.org$/i.test(parsed.hostname)) {
+    throw new Error("URL host must be a wikipedia.org subdomain");
+  }
+  if (!/^\/wiki\/[^/]+/i.test(parsed.pathname)) {
+    throw new Error("Wikipedia URL must be an /wiki/<article> path");
+  }
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
+async function getWikipediaPage(title, signal, providedUrl) {
+  const trimmedTitle = (title || "").trim();
   const urlTitle = trimmedTitle.replace(/\s+/g, "_");
-  const articleUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`;
+  const articleUrl = providedUrl && providedUrl.trim()
+    ? validateWikipediaArticleUrl(providedUrl.trim())
+    : `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`;
   const items = await brightDataWikipediaScrape(articleUrl, signal);
 
   if (!items.length) {
-    throw new Error(`Bright Data returned no Wikipedia results for "${trimmedTitle}"`);
+    throw new Error(`Bright Data returned no Wikipedia results for "${trimmedTitle || articleUrl}"`);
   }
 
   const normalize = (s) => (s || "").trim().toLowerCase().replace(/[\s_]+/g, " ");
-  const wantTitle = normalize(trimmedTitle);
 
   const slugFromUrl = (rawUrl) => {
     if (!rawUrl) return "";
@@ -609,8 +629,13 @@ async function getWikipediaPage(title, signal) {
     }
   };
 
+  const wantTitle = normalize(trimmedTitle);
+  const wantSlug = slugFromUrl(articleUrl);
+
   const match = items.find(
-    (item) => normalize(item.title) === wantTitle || slugFromUrl(item.url) === wantTitle
+    (item) =>
+      (wantTitle && normalize(item.title) === wantTitle) ||
+      (wantSlug && slugFromUrl(item.url) === wantSlug)
   );
 
   if (!match) {
@@ -619,7 +644,7 @@ async function getWikipediaPage(title, signal) {
       .slice(0, 5)
       .join(", ");
     throw new Error(
-      `Bright Data did not return the requested Wikipedia article "${trimmedTitle}". Candidates: ${returned}`
+      `Bright Data did not return the requested Wikipedia article "${trimmedTitle || articleUrl}". Candidates: ${returned}`
     );
   }
 
@@ -746,16 +771,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     const title = asTrimmedString(url.searchParams.get("title"));
-    if (!title) {
-      sendText(res, 400, "Missing title query param");
+    const articleUrlParam = asTrimmedString(url.searchParams.get("url"));
+    if (!title && !articleUrlParam) {
+      sendText(res, 400, "Missing title or url query param");
       return;
+    }
+    if (articleUrlParam) {
+      try {
+        validateWikipediaArticleUrl(articleUrlParam);
+      } catch (err) {
+        sendText(res, 400, err.message);
+        return;
+      }
     }
 
     const ctrl = new AbortController();
     const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
     const timer = setTimeout(() => ctrl.abort(), getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
     try {
-      const page = await getWikipediaPage(title, ctrl.signal);
+      const page = await getWikipediaPage(title, ctrl.signal, articleUrlParam);
       sendJson(res, 200, page);
     } catch (err) {
       sendText(res, 502, `Wikipedia page lookup failed: ${err.message}`);

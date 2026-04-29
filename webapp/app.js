@@ -300,8 +300,11 @@ async function fetchWikipediaSuggestions(query) {
   return Array.isArray(data?.suggestions) ? data.suggestions : [];
 }
 
-async function fetchWikipediaPage(term) {
-  const resp = await fetch(`/api/wikipedia-page?title=${encodeURIComponent(term)}`);
+async function fetchWikipediaPage(title, articleUrl) {
+  const params = new URLSearchParams();
+  if (title) params.set("title", title);
+  if (articleUrl) params.set("url", articleUrl);
+  const resp = await fetch(`/api/wikipedia-page?${params.toString()}`);
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Wikipedia API error: ${resp.status} ${text}`);
@@ -554,12 +557,13 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   return { markdown, sourceUrl: meta.url || videoUrl, saveResult, title: meta.title };
 }
 
-async function processWikipediaTerm({ apiKey, model, term, panel }) {
+async function processWikipediaTerm({ apiKey, model, entry, panel }) {
+  const term = entry.title;
   panel.setProgress("Loading Wikipedia article", 15);
   const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
   let wikiData;
   try {
-    wikiData = await fetchWikipediaPage(term);
+    wikiData = await fetchWikipediaPage(term, entry.url);
   } finally {
     stopHeartbeat(fetchHb);
   }
@@ -646,12 +650,13 @@ ${extract.slice(0, 180000)}`
   return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle, itemType: "dictionary" };
 }
 
-async function processWikipediaBusiness({ apiKey, model, term, panel }) {
+async function processWikipediaBusiness({ apiKey, model, entry, panel }) {
+  const term = entry.title;
   panel.setProgress("Loading Wikipedia article", 15);
   const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
   let wikiData;
   try {
-    wikiData = await fetchWikipediaPage(term);
+    wikiData = await fetchWikipediaPage(term, entry.url);
   } finally {
     stopHeartbeat(fetchHb);
   }
@@ -748,18 +753,18 @@ function renderSelectedWikiTerms() {
   const holder = el("wikiSelectedTerms");
   holder.innerHTML = "";
 
-  selectedWikiTerms.forEach((term) => {
+  selectedWikiTerms.forEach((entry) => {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = term;
+    chip.textContent = entry.title;
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "chip-remove";
     removeBtn.textContent = "×";
-    removeBtn.setAttribute("aria-label", `Remove ${term}`);
+    removeBtn.setAttribute("aria-label", `Remove ${entry.title}`);
     removeBtn.addEventListener("click", () => {
-      const idx = selectedWikiTerms.indexOf(term);
+      const idx = selectedWikiTerms.indexOf(entry);
       if (idx >= 0) selectedWikiTerms.splice(idx, 1);
       renderSelectedWikiTerms();
     });
@@ -769,11 +774,13 @@ function renderSelectedWikiTerms() {
   });
 }
 
-function addWikiTerm(term) {
-  const normalized = (term || "").trim();
-  if (!normalized) return;
-  if (selectedWikiTerms.some((entry) => entry.toLowerCase() === normalized.toLowerCase())) return;
-  selectedWikiTerms.push(normalized);
+function addWikiTerm(input) {
+  const entry = typeof input === "string" ? { title: input, url: "" } : { ...input };
+  entry.title = (entry.title || "").trim();
+  entry.url = (entry.url || "").trim();
+  if (!entry.title) return;
+  if (selectedWikiTerms.some((existing) => existing.title.toLowerCase() === entry.title.toLowerCase())) return;
+  selectedWikiTerms.push(entry);
   renderSelectedWikiTerms();
 }
 
@@ -781,18 +788,18 @@ function renderSelectedWikiBusinesses() {
   const holder = el("wikiSelectedBusinesses");
   holder.innerHTML = "";
 
-  selectedWikiBusinesses.forEach((term) => {
+  selectedWikiBusinesses.forEach((entry) => {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = term;
+    chip.textContent = entry.title;
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
     removeBtn.className = "chip-remove";
     removeBtn.textContent = "×";
-    removeBtn.setAttribute("aria-label", `Remove ${term}`);
+    removeBtn.setAttribute("aria-label", `Remove ${entry.title}`);
     removeBtn.addEventListener("click", () => {
-      const idx = selectedWikiBusinesses.indexOf(term);
+      const idx = selectedWikiBusinesses.indexOf(entry);
       if (idx >= 0) selectedWikiBusinesses.splice(idx, 1);
       renderSelectedWikiBusinesses();
     });
@@ -802,11 +809,13 @@ function renderSelectedWikiBusinesses() {
   });
 }
 
-function addWikiBusiness(term) {
-  const normalized = (term || "").trim();
-  if (!normalized) return;
-  if (selectedWikiBusinesses.some((entry) => entry.toLowerCase() === normalized.toLowerCase())) return;
-  selectedWikiBusinesses.push(normalized);
+function addWikiBusiness(input) {
+  const entry = typeof input === "string" ? { title: input, url: "" } : { ...input };
+  entry.title = (entry.title || "").trim();
+  entry.url = (entry.url || "").trim();
+  if (!entry.title) return;
+  if (selectedWikiBusinesses.some((existing) => existing.title.toLowerCase() === entry.title.toLowerCase())) return;
+  selectedWikiBusinesses.push(entry);
   renderSelectedWikiBusinesses();
 }
 
@@ -838,13 +847,14 @@ function renderWikiSuggestions(suggestions, listKey) {
     btn.appendChild(titleDiv);
     btn.appendChild(descDiv);
     btn.addEventListener("click", () => {
+      const entry = { title: suggestion.title, url: suggestion.url || "" };
       if (isBusiness) {
-        addWikiBusiness(suggestion.title);
+        addWikiBusiness(entry);
         el("wikiBusinessInput").value = "";
         el("wikiBusinessInput").focus();
         clearWikiSuggestions("business");
       } else {
-        addWikiTerm(suggestion.title);
+        addWikiTerm(entry);
         el("wikiTermInput").value = "";
         el("wikiTermInput").focus();
         clearWikiSuggestions("term");
@@ -1073,26 +1083,28 @@ async function runWikipedia() {
   updateActionButtons();
   const totalCount = terms.length + businesses.length;
   statusEl.textContent = `Running ${totalCount} item${totalCount === 1 ? "" : "s"}`;
-  const firstLabel = terms[0] || businesses[0] || "Wikipedia";
-  openSource.href = `https://en.wikipedia.org/wiki/${encodeURIComponent(firstLabel.replace(/\s+/g, "_"))}`;
+  const firstEntry = terms[0] || businesses[0];
+  const firstLabel = firstEntry?.title || "Wikipedia";
+  openSource.href = firstEntry?.url
+    || `https://en.wikipedia.org/wiki/${encodeURIComponent(firstLabel.replace(/\s+/g, "_"))}`;
 
   const workItems = [
-    ...terms.map((term) => ({ term, itemType: "dictionary" })),
-    ...businesses.map((term) => ({ term, itemType: "business" }))
+    ...terms.map((entry) => ({ entry, itemType: "dictionary" })),
+    ...businesses.map((entry) => ({ entry, itemType: "business" }))
   ];
 
   const offset = progressContainer.children.length;
-  const panels = workItems.map(({ term }, index) => ({
-    term,
-    panel: createProgressPanel(term, offset + index)
+  const panels = workItems.map(({ entry }, index) => ({
+    entry,
+    panel: createProgressPanel(entry.title, offset + index)
   }));
 
   const results = await Promise.allSettled(
-    workItems.map(({ term, itemType }, index) => {
+    workItems.map(({ entry, itemType }, index) => {
       const panel = panels[index].panel;
       return itemType === "business"
-        ? processWikipediaBusiness({ apiKey, model, term, panel })
-        : processWikipediaTerm({ apiKey, model, term, panel });
+        ? processWikipediaBusiness({ apiKey, model, entry, panel })
+        : processWikipediaTerm({ apiKey, model, entry, panel });
     })
   );
 
