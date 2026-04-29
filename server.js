@@ -587,17 +587,43 @@ async function getWikipediaSuggestions(query, signal) {
 }
 
 async function getWikipediaPage(title, signal) {
-  const items = await brightDataWikipediaScrape(title, 1, signal);
+  const trimmedTitle = title.trim();
+  const items = await brightDataWikipediaScrape(trimmedTitle, 5, signal);
 
-  const normalized = title.trim().toLowerCase();
-  const exact = items.find((item) => (item.title || "").trim().toLowerCase() === normalized);
-  const match = exact || items[0];
-
-  if (!match) {
-    throw new Error(`Bright Data returned no Wikipedia results for "${title}"`);
+  if (!items.length) {
+    throw new Error(`Bright Data returned no Wikipedia results for "${trimmedTitle}"`);
   }
 
-  const resolvedTitle = match.title || title;
+  const normalize = (s) => (s || "").trim().toLowerCase().replace(/[\s_]+/g, " ");
+  const wantTitle = normalize(trimmedTitle);
+
+  const slugFromUrl = (rawUrl) => {
+    if (!rawUrl) return "";
+    try {
+      const path = new URL(rawUrl).pathname;
+      return normalize(decodeURIComponent(path.replace(/^\/wiki\//i, "")));
+    } catch {
+      return "";
+    }
+  };
+
+  const match = items.find((item) => {
+    if (normalize(item.title) === wantTitle) return true;
+    if (slugFromUrl(item.url) === wantTitle) return true;
+    return false;
+  });
+
+  if (!match) {
+    const returned = items
+      .map((item) => item.title || item.url || "(unknown)")
+      .slice(0, 5)
+      .join(", ");
+    throw new Error(
+      `Bright Data did not return the requested Wikipedia article "${trimmedTitle}". Candidates: ${returned}`
+    );
+  }
+
+  const resolvedTitle = match.title || trimmedTitle;
   const urlTitle = resolvedTitle.replace(/\s+/g, "_");
 
   return {
