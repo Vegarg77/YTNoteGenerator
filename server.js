@@ -586,11 +586,31 @@ async function getWikipediaSuggestions(query, signal) {
   })).filter((entry) => entry.title);
 }
 
+function validateWikipediaArticleUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error("Invalid Wikipedia URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Wikipedia URL must use https");
+  }
+  if (!/^[a-z]{2,3}(-[a-z0-9]+)?\.wikipedia\.org$/i.test(parsed.hostname)) {
+    throw new Error("URL host must be a wikipedia.org subdomain");
+  }
+  if (!/^\/wiki\/[^/]+/i.test(parsed.pathname)) {
+    throw new Error("Wikipedia URL must be an /wiki/<article> path");
+  }
+  return `${parsed.origin}${parsed.pathname}`;
+}
+
 async function getWikipediaPage(title, signal, providedUrl) {
   const trimmedTitle = (title || "").trim();
   const urlTitle = trimmedTitle.replace(/\s+/g, "_");
-  const articleUrl = (providedUrl && providedUrl.trim())
-    || `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`;
+  const articleUrl = providedUrl && providedUrl.trim()
+    ? validateWikipediaArticleUrl(providedUrl.trim())
+    : `https://en.wikipedia.org/wiki/${encodeURIComponent(urlTitle)}`;
   const items = await brightDataWikipediaScrape(articleUrl, signal);
 
   if (!items.length) {
@@ -612,18 +632,11 @@ async function getWikipediaPage(title, signal, providedUrl) {
   const wantTitle = normalize(trimmedTitle);
   const wantSlug = slugFromUrl(articleUrl);
 
-  let match = items.find(
+  const match = items.find(
     (item) =>
       (wantTitle && normalize(item.title) === wantTitle) ||
       (wantSlug && slugFromUrl(item.url) === wantSlug)
   );
-
-  // If the client supplied an authoritative URL but Bright Data returned a
-  // different (e.g. redirected) page, accept the first item that has content
-  // rather than failing — the URL we sent is what we wanted scraped.
-  if (!match && providedUrl) {
-    match = items.find((item) => item.extract || item.description) || items[0];
-  }
 
   if (!match) {
     const returned = items
@@ -762,6 +775,14 @@ const server = http.createServer(async (req, res) => {
     if (!title && !articleUrlParam) {
       sendText(res, 400, "Missing title or url query param");
       return;
+    }
+    if (articleUrlParam) {
+      try {
+        validateWikipediaArticleUrl(articleUrlParam);
+      } catch (err) {
+        sendText(res, 400, err.message);
+        return;
+      }
     }
 
     const ctrl = new AbortController();
