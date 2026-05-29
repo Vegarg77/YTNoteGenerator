@@ -517,10 +517,10 @@ function extractWikiCoordinates(item) {
   return null;
 }
 
-async function fetchWikipediaCoordinates(title) {
+async function fetchWikipediaCoordinates(title, signal) {
   const url = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=coordinates&format=json`;
   try {
-    const data = await fetchJson(url);
+    const data = await fetchJson(url, { signal });
     const pages = data?.query?.pages;
     if (!pages) return null;
     for (const page of Object.values(pages)) {
@@ -683,7 +683,7 @@ async function getWikipediaPage(title, signal, providedUrl) {
 
   let location = match.location || null;
   if (!location) {
-    location = await fetchWikipediaCoordinates(resolvedTitle);
+    location = await fetchWikipediaCoordinates(resolvedTitle, signal);
   }
 
   return {
