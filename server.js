@@ -10,7 +10,7 @@ const wiki = require("./lib/wiki");
 
 cfg.loadDotenv();
 
-const PORT = cfg.PORT;
+const PORT = cfg.getPort();
 const WEBAPP_DIR = path.join(__dirname, "webapp");
 
 const MIME_TYPES = {
