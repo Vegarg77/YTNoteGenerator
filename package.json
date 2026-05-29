@@ -4,7 +4,7 @@
   "description": "Generate Obsidian-ready notes from YouTube videos and Wikipedia articles by combining transcript/article extraction + OpenAI cleanup/summarization.",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/test_utils.js",
     "start": "node server.js"
   },
   "repository": {
