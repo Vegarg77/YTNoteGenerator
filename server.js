@@ -517,6 +517,28 @@ function extractWikiCoordinates(item) {
   return null;
 }
 
+async function fetchWikipediaCoordinates(title) {
+  const url = `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=coordinates&format=json`;
+  try {
+    const data = await fetchJson(url);
+    const pages = data?.query?.pages;
+    if (!pages) return null;
+    for (const page of Object.values(pages)) {
+      const coords = Array.isArray(page?.coordinates) ? page.coordinates : [];
+      for (const coord of coords) {
+        const lat = Number(coord?.lat);
+        const lon = Number(coord?.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          return { lat, lon };
+        }
+      }
+    }
+  } catch {
+    // Best-effort — silently skip if Wikipedia API is unreachable
+  }
+  return null;
+}
+
 function parseBrightDataWikiItem(item) {
   const title = pickFirstStringByKeys(item, ["title", "page_title", "name", "header_title", "article_title"]);
   const url = pickFirstStringByKeys(item, ["url", "page_url", "link", "input_url", "wiki_url"]);
@@ -659,11 +681,16 @@ async function getWikipediaPage(title, signal, providedUrl) {
 
   const resolvedTitle = match.title || trimmedTitle;
 
+  let location = match.location || null;
+  if (!location) {
+    location = await fetchWikipediaCoordinates(resolvedTitle);
+  }
+
   return {
     title: resolvedTitle,
     extract: match.extract || match.description || "",
     url: match.url || articleUrl,
-    location: match.location || null
+    location
   };
 }
 
