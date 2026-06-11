@@ -1,1 +1,1 @@
-yt-transcript-api
+youtube-transcript-api
