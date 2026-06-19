@@ -10,7 +10,7 @@ const copyStatus = el("copyStatus");
 const selectedWikiTerms = [];
 const selectedWikiBusinesses = [];
 
-let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "gpt-4o-mini" };
+let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "gpt-4o-mini", OPENAI_BASE_URL: "https://api.openai.com" };
 let wikiTermSuggestionTimer = null;
 let wikiBusinessSuggestionTimer = null;
 let wikiTermSuggestionRequestId = 0;
@@ -329,8 +329,16 @@ async function saveNoteToServer({ markdown, noteTitle, noteType }) {
   return resp.json();
 }
 
-async function openaiChatCompletions({ apiKey, body, signal }) {
-  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+// Base URL of the LLM API (OpenAI or any compatible provider, e.g. DeepSeek).
+function llmBaseUrl() {
+  return (appSettings.OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
+}
+function isOpenAIBase(baseUrl) {
+  return /(^|\.)openai\.com$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
+}
+
+async function openaiChatCompletions({ apiKey, body, signal, baseUrl }) {
+  const resp = await fetch(`${baseUrl || llmBaseUrl()}/v1/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -341,7 +349,7 @@ async function openaiChatCompletions({ apiKey, body, signal }) {
   });
   if (!resp.ok) {
     const t = await resp.text();
-    throw new Error(`OpenAI chat error: ${resp.status} ${t}`);
+    throw new Error(`Chat API error: ${resp.status} ${t}`);
   }
   const data = await resp.json();
   return data?.choices?.[0]?.message?.content || "";
@@ -362,8 +370,8 @@ function normalizeResponseOutputText(data) {
   return chunks.join("\n").trim();
 }
 
-async function openaiResponses({ apiKey, body, signal }) {
-  const resp = await fetch("https://api.openai.com/v1/responses", {
+async function openaiResponses({ apiKey, body, signal, baseUrl }) {
+  const resp = await fetch(`${baseUrl || llmBaseUrl()}/v1/responses`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -381,12 +389,16 @@ async function openaiResponses({ apiKey, body, signal }) {
 }
 
 async function openaiText({ apiKey, model, messages, temperature, signal }) {
+  const baseUrl = llmBaseUrl();
+  // The /responses endpoint is OpenAI-specific (gpt-5 family). Compatible providers like DeepSeek
+  // only implement /chat/completions, so only take the responses path on the OpenAI base.
   const isGpt5Family = /^gpt-5/i.test(model || "");
 
-  if (isGpt5Family) {
+  if (isGpt5Family && isOpenAIBase(baseUrl)) {
     return openaiResponses({
       apiKey,
       signal,
+      baseUrl,
       body: {
         model,
         input: messages
@@ -397,6 +409,7 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
   return openaiChatCompletions({
     apiKey,
     signal,
+    baseUrl,
     body: {
       model,
       temperature,
@@ -943,6 +956,7 @@ function populateSettingsForm(data) {
   el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
   el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
   el("settingModel").value = data.OPENAI_MODEL || "gpt-4o-mini";
+  el("settingBaseUrl").value = data.OPENAI_BASE_URL || "https://api.openai.com";
   el("settingBdTimeout").value = data.BRIGHT_DATA_TIMEOUT_MS || 120000;
 }
 
@@ -959,6 +973,7 @@ async function saveSettings() {
     OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
     BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
     OPENAI_MODEL: el("settingModel").value.trim() || "gpt-4o-mini",
+    OPENAI_BASE_URL: el("settingBaseUrl").value.trim().replace(/\/+$/, "") || "https://api.openai.com",
     BRIGHT_DATA_TIMEOUT_MS: el("settingBdTimeout").value.trim() || "120000",
   };
 
