@@ -120,16 +120,19 @@
 
           <fieldset class="settings-group">
             <legend>API Keys</legend>
-            <label for="settingOpenaiKey">OpenAI API Key</label>
-            <input id="settingOpenaiKey" type="password" placeholder="sk-..." autocomplete="off" />
+            <label for="settingOpenaiKey">LLM API Key</label>
+            <input id="settingOpenaiKey" type="password" placeholder="sk-... or DeepSeek key" autocomplete="off" />
             <label for="settingBrightKey">Bright Data API Key</label>
             <input id="settingBrightKey" type="password" placeholder="Bright Data API token" autocomplete="off" />
           </fieldset>
 
           <fieldset class="settings-group">
             <legend>Model</legend>
-            <label for="settingModel">OpenAI Model</label>
-            <input id="settingModel" type="text" value="gpt-4o-mini" placeholder="gpt-4o-mini" />
+            <label for="settingBaseUrl">API Base URL</label>
+            <input id="settingBaseUrl" type="text" value="https://api.openai.com" placeholder="https://api.openai.com" />
+            <small>OpenAI-compatible. DeepSeek: <code>https://api.deepseek.com</code></small>
+            <label for="settingModel">Model</label>
+            <input id="settingModel" type="text" value="gpt-4o-mini" placeholder="gpt-4o-mini / deepseek-v4-flash" />
           </fieldset>
 
           <fieldset class="settings-group">

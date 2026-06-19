@@ -233,6 +233,7 @@ const server = http.createServer(async (req, res) => {
         OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
         OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
         OPENAI_MODEL: appCfg.OPENAI_MODEL,
+        OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,
         BRIGHT_DATA_API_TOKEN: appCfg.BRIGHT_DATA_API_TOKEN,
         BRIGHT_DATA_TIMEOUT_MS: appCfg.BRIGHT_DATA_TIMEOUT_MS,
       });
@@ -244,7 +245,7 @@ const server = http.createServer(async (req, res) => {
         const payload = await readJsonBody(req);
         const allowedKeys = [
           "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
-          "OPENAI_API_KEY", "OPENAI_MODEL",
+          "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
           "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_TIMEOUT_MS"
         ];
         const updates = {};
@@ -272,6 +273,7 @@ const server = http.createServer(async (req, res) => {
           OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
           OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
           OPENAI_MODEL: appCfg.OPENAI_MODEL,
+          OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,
           BRIGHT_DATA_API_TOKEN: appCfg.BRIGHT_DATA_API_TOKEN,
           BRIGHT_DATA_TIMEOUT_MS: appCfg.BRIGHT_DATA_TIMEOUT_MS,
         });
