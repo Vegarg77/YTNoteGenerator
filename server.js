@@ -316,3 +316,14 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`YTNoteGenerator server running on http://localhost:${PORT}`);
 });
+
+// Never die silently. Node kills the process on unhandled rejections/exceptions by
+// default, which surfaces in the browser only as "Failed to fetch" on every endpoint —
+// undebuggable from the UI. Log loudly with a stack and keep serving; a personal tool
+// is better degraded-but-observable than dead.
+process.on("uncaughtException", (err) => {
+  console.error(`[FATAL uncaughtException] ${err?.stack || err}`);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error(`[FATAL unhandledRejection] ${reason?.stack || reason}`);
+});
