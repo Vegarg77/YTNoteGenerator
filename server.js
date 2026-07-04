@@ -7,6 +7,7 @@ const cfg = require("./lib/config");
 const utils = require("./lib/utils");
 const brightdata = require("./lib/brightdata");
 const wiki = require("./lib/wiki");
+const tags = require("./lib/tags");
 
 cfg.loadDotenv();
 
@@ -111,6 +112,7 @@ const server = http.createServer(async (req, res) => {
         metadata: {
           title: metadata?.title || "",
           channel: metadata?.channel || "",
+          publishedDate: metadata?.publishedDate || "",
           url: rawUrl || metadata?.url || `https://www.youtube.com/watch?v=${videoId}`
         }
       });
@@ -223,6 +225,22 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/tags") {
+    if (req.method !== "GET") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+    try {
+      const appCfg = cfg.getConfig();
+      const refresh = url.searchParams.get("refresh") === "1";
+      const pool = await tags.getTagPool(appCfg.OBSIDIAN_VAULT_DIR, appCfg.TAG_EXCLUDE, { refresh });
+      sendJson(res, 200, pool);
+    } catch (err) {
+      sendText(res, 500, `Tag scan failed: ${err.message}`);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/settings") {
     if (req.method === "GET") {
       cfg.reloadEnv();
@@ -231,6 +249,8 @@ const server = http.createServer(async (req, res) => {
         OBSIDIAN_NOTE_DIR: appCfg.OBSIDIAN_NOTE_DIR,
         OBSIDIAN_DICTIONARY_DIR: appCfg.OBSIDIAN_DICTIONARY_DIR,
         OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
+        OBSIDIAN_VAULT_DIR: appCfg.OBSIDIAN_VAULT_DIR,
+        TAG_EXCLUDE: appCfg.TAG_EXCLUDE,
         OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
         OPENAI_MODEL: appCfg.OPENAI_MODEL,
         OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,
@@ -245,6 +265,7 @@ const server = http.createServer(async (req, res) => {
         const payload = await readJsonBody(req);
         const allowedKeys = [
           "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
+          "OBSIDIAN_VAULT_DIR", "TAG_EXCLUDE",
           "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
           "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_TIMEOUT_MS"
         ];
@@ -271,6 +292,8 @@ const server = http.createServer(async (req, res) => {
           OBSIDIAN_NOTE_DIR: appCfg.OBSIDIAN_NOTE_DIR,
           OBSIDIAN_DICTIONARY_DIR: appCfg.OBSIDIAN_DICTIONARY_DIR,
           OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
+          OBSIDIAN_VAULT_DIR: appCfg.OBSIDIAN_VAULT_DIR,
+          TAG_EXCLUDE: appCfg.TAG_EXCLUDE,
           OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
           OPENAI_MODEL: appCfg.OPENAI_MODEL,
           OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,

@@ -27,11 +27,33 @@ function nowDateTimeStrings() {
   return { date, time };
 }
 
-function buildVideoNoteMarkdown({ date, time, channel, summary, fixedTranscript, videoUrl }) {
-  return [
+// "(~3 years before this note)" — the age of the video AT NOTE-CREATION time, so a
+// future reader knows how stale the information already was when captured.
+// Returns "" for missing/unparseable dates or videos less than a month old.
+function publishedAgeLabel(publishedYMD, noteDateMs = Date.now()) {
+  if (!publishedYMD) return "";
+  const pub = Date.parse(`${publishedYMD}T00:00:00Z`);
+  if (!Number.isFinite(pub)) return "";
+  const days = Math.floor((noteDateMs - pub) / 86400000);
+  if (days < 30) return "";
+  const months = Math.floor(days / 30.44);
+  if (months < 12) return ` (~${months} month${months === 1 ? "" : "s"} before this note)`;
+  const years = Math.floor(days / 365.25);
+  return ` (~${years} year${years === 1 ? "" : "s"} before this note)`;
+}
+
+function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, fixedTranscript, videoUrl, tags }) {
+  const header = [
     `#### ${date}  ${time}`,
     "",
-    `###### Channel: ${channel || ""}`,
+    `###### Channel: ${channel || ""}`
+  ];
+  if (publishedDate) {
+    header.push("", `###### Published: ${publishedDate}${publishedAgeLabel(publishedDate)}`);
+  }
+  const tagLine = ["#VN", ...(Array.isArray(tags) ? tags : []).map((t) => `#${t.replace(/^#/, "")}`)].join(" ");
+  return [
+    ...header,
     "",
     "## Summary:",
     "",
@@ -45,7 +67,7 @@ function buildVideoNoteMarkdown({ date, time, channel, summary, fixedTranscript,
     "",
     videoUrl || "",
     "",
-    "#VN"
+    tagLine
   ].join("\n");
 }
 
@@ -288,6 +310,7 @@ async function fetchTranscriptFromServer(videoUrl) {
     metadata: {
       title: data?.metadata?.title || "",
       channel: data?.metadata?.channel || "",
+      publishedDate: data?.metadata?.publishedDate || "",
       url: data?.metadata?.url || videoUrl
     }
   };
@@ -418,6 +441,79 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
   });
 }
 
+// ---- Note tagging (pool = the user's existing vault tags, scanned server-side) ----
+
+// memoized per page load — the pool changes slowly, and the server caches its scan too
+let tagPoolPromise = null;
+async function getTagPool() {
+  if (!tagPoolPromise) {
+    tagPoolPromise = (async () => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 30000);
+      try {
+        const resp = await fetch("/api/tags", { signal: ctrl.signal });
+        if (!resp.ok) throw new Error(await resp.text());
+        const data = await resp.json();
+        return (data.tags || []).map((entry) => entry.tag);
+      } finally {
+        clearTimeout(t);
+      }
+    })().catch((err) => {
+      tagPoolPromise = null; // allow retry on the next video
+      throw err;
+    });
+  }
+  return tagPoolPromise;
+}
+
+// Parse the model's reply and enforce the pool: accept only tags that exist in the
+// pool (case-insensitive, canonical pool casing wins), deduped. Models occasionally
+// invent plausible tags no matter the prompt — the guarantee lives here, not there.
+function validateTagSelection(rawText, pool) {
+  const byLower = new Map(pool.map((t) => [t.toLowerCase(), t]));
+  let names = [];
+  try {
+    const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
+    const start = jsonText.indexOf("[");
+    const end = jsonText.lastIndexOf("]");
+    if (start >= 0 && end > start) {
+      const parsed = JSON.parse(jsonText.slice(start, end + 1));
+      if (Array.isArray(parsed)) names = parsed;
+    }
+  } catch { /* fall through to empty */ }
+  const out = [];
+  const seen = new Set();
+  for (const raw of names) {
+    const canonical = byLower.get(String(raw).trim().replace(/^#/, "").toLowerCase());
+    if (canonical && !seen.has(canonical)) {
+      seen.add(canonical);
+      out.push(canonical);
+    }
+  }
+  return out;
+}
+
+// Pick applicable tags for a note from the fixed pool. Empty array is a valid,
+// expected outcome (no forced matches). Any failure degrades to no tags.
+async function selectNoteTags({ apiKey, model, title, channel, summary, pool, signal }) {
+  if (!pool || pool.length === 0) return [];
+  const messages = [
+    { role: "system", content: "You label notes with tags chosen STRICTLY from a fixed list. Never invent tags." },
+    {
+      role: "user",
+      content:
+        `Here is the complete list of allowed tags:\n${pool.join(", ")}\n\n` +
+        `Select every tag from that list that genuinely applies to the video note below. ` +
+        `Only include a tag if the note's content is substantially about that topic. ` +
+        `If none apply, return an empty array. ` +
+        `Respond with ONLY a JSON array of tag names (no # prefix), nothing else.\n\n` +
+        `Video Title: ${title || ""}\nChannel: ${channel || ""}\n\nSUMMARY:\n${(summary || "").slice(0, 12000)}`
+    }
+  ];
+  const reply = await openaiText({ apiKey, model, messages, temperature: 0, signal });
+  return validateTagSelection(reply, pool);
+}
+
 function startHeartbeat(panel, label = "Working…", floorPct = 69) {
   let i = 0;
   return setInterval(() => {
@@ -443,10 +539,10 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   if (meta.title) panel.setTitle(meta.title);
 
   // Determine chunks upfront so we can calculate accurate progress weights.
-  // Weights: 1 (fetch) + numChunks (one per chunk) + 1 (summarize) + 0.1 (save)
+  // Weights: 1 (fetch) + numChunks (one per chunk) + 1 (summarize) + 0.3 (tags) + 0.1 (save)
   const chunks = transcript.length > 12000 ? splitIntoChunks(transcript, 12000) : null;
   const numChunks = chunks ? chunks.length : 1;
-  const totalWeight = 1 + numChunks + 1 + 0.1;
+  const totalWeight = 1 + numChunks + 1 + 0.3 + 0.1;
 
   function pctAt(unitsComplete) {
     return Math.round((unitsComplete / totalWeight) * 100);
@@ -454,7 +550,8 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
 
   const fetchDonePct = pctAt(1);
   const summarizeStartPct = pctAt(1 + numChunks);
-  const savePct = Math.min(99, pctAt(1 + numChunks + 1));
+  const tagStartPct = pctAt(1 + numChunks + 1);
+  const savePct = Math.min(99, pctAt(1 + numChunks + 1 + 0.3));
 
   panel.appendLog(`Transcript chunks: ${numChunks}`);
   panel.setProgress("Cleaning transcript…", fetchDonePct, "Preparing");
@@ -542,14 +639,32 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   }
   summary = (summary || "").trim();
 
+  // Tag selection from the vault pool — silently applied; the user edits during
+  // note review. Any failure (scan, LLM, parse) degrades to just #VN, never blocks.
+  let noteTags = [];
+  panel.setProgress("Selecting tags…", tagStartPct);
+  try {
+    const pool = await getTagPool();
+    noteTags = await withTimeout(
+      (signal) => selectNoteTags({ apiKey, model, title: meta.title, channel: meta.channel, summary, pool, signal }),
+      60000,
+      "OpenAI (tags)"
+    );
+    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+  } catch (tagErr) {
+    panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
+  }
+
   const { date, time } = nowDateTimeStrings();
   const markdown = buildVideoNoteMarkdown({
     date,
     time,
     channel: meta.channel,
+    publishedDate: meta.publishedDate || "",
     summary,
     fixedTranscript,
-    videoUrl: meta.url || videoUrl
+    videoUrl: meta.url || videoUrl,
+    tags: noteTags
   });
 
   panel.setProgress("Saving note file…", savePct);
@@ -953,6 +1068,8 @@ function populateSettingsForm(data) {
   el("settingNotePath").value = data.OBSIDIAN_NOTE_DIR || "";
   el("settingDictPath").value = data.OBSIDIAN_DICTIONARY_DIR || "";
   el("settingBizPath").value = data.OBSIDIAN_BUSINESS_DIR || "";
+  el("settingVaultPath").value = data.OBSIDIAN_VAULT_DIR || "";
+  el("settingTagExclude").value = data.TAG_EXCLUDE || "VN";
   el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
   el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
   el("settingModel").value = data.OPENAI_MODEL || "gpt-4o-mini";
@@ -970,6 +1087,8 @@ async function saveSettings() {
     OBSIDIAN_NOTE_DIR: el("settingNotePath").value.trim(),
     OBSIDIAN_DICTIONARY_DIR: el("settingDictPath").value.trim(),
     OBSIDIAN_BUSINESS_DIR: el("settingBizPath").value.trim(),
+    OBSIDIAN_VAULT_DIR: el("settingVaultPath").value.trim(),
+    TAG_EXCLUDE: el("settingTagExclude").value.trim() || "VN",
     OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
     BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
     OPENAI_MODEL: el("settingModel").value.trim() || "gpt-4o-mini",
@@ -990,6 +1109,7 @@ async function saveSettings() {
     const data = await resp.json();
     appSettings = data;
     populateSettingsForm(data);
+    tagPoolPromise = null; // vault dir / exclude list may have changed — re-fetch next run
     okEl.textContent = "Settings saved.";
     setTimeout(() => { okEl.textContent = ""; }, 3000);
   } catch (err) {

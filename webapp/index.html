@@ -119,6 +119,16 @@
           </fieldset>
 
           <fieldset class="settings-group">
+            <legend>Note Tagging</legend>
+            <label for="settingVaultPath">Vault Root (tag scan)</label>
+            <input id="settingVaultPath" type="text" placeholder="/path/to/obsidian-vault" />
+            <small>Existing tags found here become the pool video notes are tagged from. Defaults to the video-notes path if blank.</small>
+            <label for="settingTagExclude">Excluded Tags</label>
+            <input id="settingTagExclude" type="text" value="VN" placeholder="VN, todo, daily" />
+            <small>Comma/space separated; never offered to the tagger (with or without <code>#</code>).</small>
+          </fieldset>
+
+          <fieldset class="settings-group">
             <legend>API Keys</legend>
             <label for="settingOpenaiKey">LLM API Key</label>
             <input id="settingOpenaiKey" type="password" placeholder="sk-... or DeepSeek key" autocomplete="off" />
