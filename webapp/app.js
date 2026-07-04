@@ -449,12 +449,19 @@ async function getTagPool() {
   if (!tagPoolPromise) {
     tagPoolPromise = (async () => {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 30000);
+      // generous: big vaults on network-backed filesystems can take a while on the
+      // first (uncached) scan. Prefetched at batch start, so this rarely blocks.
+      const t = setTimeout(() => ctrl.abort(), 120000);
       try {
         const resp = await fetch("/api/tags", { signal: ctrl.signal });
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
         return (data.tags || []).map((entry) => entry.tag);
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          throw new Error("vault tag scan timed out (120s) — check Vault Root in Settings / vault size");
+        }
+        throw err;
       } finally {
         clearTimeout(t);
       }
@@ -647,7 +654,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const pool = await getTagPool();
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: meta.title, channel: meta.channel, summary, pool, signal }),
-      60000,
+      120000,
       "OpenAI (tags)"
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
@@ -1159,6 +1166,11 @@ async function runYoutube() {
     inputErr.textContent = "Please enter at least one YouTube video URL.";
     return;
   }
+
+  // warm the vault tag pool NOW — the scan runs concurrently with the (much longer)
+  // transcript+clean+summary phase, so tag selection never waits on it. Errors are
+  // swallowed here; the per-video tag step reports them properly on retry.
+  getTagPool().catch(() => {});
 
   if (allPanelsSettled()) progressContainer.innerHTML = "";
 
