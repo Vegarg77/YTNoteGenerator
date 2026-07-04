@@ -688,7 +688,13 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     panel.appendLog(`Note save failed: ${reason}`);
   }
 
-  panel.setProgress("Done", 100, "Note ready");
+  // honest completion: don't say "Note ready" when the file never landed —
+  // the markdown still exists in the output box, so point at Copy Markdown.
+  if (saveResult) {
+    panel.setProgress("Done", 100, "Note ready");
+  } else {
+    panel.setProgress("Done — SAVE FAILED", 100, "Note not written; use Copy Markdown below");
+  }
   return { markdown, sourceUrl: meta.url || videoUrl, saveResult, title: meta.title };
 }
 
