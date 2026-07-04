@@ -35,8 +35,8 @@ function publishedAgeLabel(publishedYMD, noteDateMs = Date.now()) {
   const pub = Date.parse(`${publishedYMD}T00:00:00Z`);
   if (!Number.isFinite(pub)) return "";
   const days = Math.floor((noteDateMs - pub) / 86400000);
-  if (days < 30) return "";
   const months = Math.floor(days / 30.44);
+  if (months < 1) return ""; // fresher than ~a month — no age context needed
   if (months < 12) return ` (~${months} month${months === 1 ? "" : "s"} before this note)`;
   const years = Math.floor(days / 365.25);
   return ` (~${years} year${years === 1 ? "" : "s"} before this note)`;
