@@ -12,16 +12,21 @@ The app has two main modes, accessible via a tabbed web interface:
 
 For each video, the app:
 
-- Collects transcript text + basic metadata (title, channel, URL).
+- Collects transcript text + basic metadata (title, channel, URL, publish date).
 - Cleans transcript text (punctuation/capitalization, removes noisy tags, translates non-English transcript text to English).
 - Generates a structured summary.
+- Selects topic tags from your EXISTING vault tag pool (scanned server-side from the
+  Obsidian vault; settings exclude-list filters workflow tags). Selection is LLM-picked
+  from the summary but validated in code against the pool — invented tags are dropped,
+  zero matches is valid.
 - Builds a Markdown note in this format:
-  - Date/time
+  - Note creation date/time
   - Channel
+  - Video publish date, with the video's age at note time ("~3 years before this note")
   - Summary
   - Cleaned transcript
   - Source video link
-  - `#VN` tag
+  - `#VN` tag + the selected topic tags
 
 ### Wikipedia Notes
 
