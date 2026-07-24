@@ -27,21 +27,6 @@ function nowDateTimeStrings() {
   return { date, time };
 }
 
-// "(~3 years before this note)" — the age of the video AT NOTE-CREATION time, so a
-// future reader knows how stale the information already was when captured.
-// Returns "" for missing/unparseable dates or videos less than a month old.
-function publishedAgeLabel(publishedYMD, noteDateMs = Date.now()) {
-  if (!publishedYMD) return "";
-  const pub = Date.parse(`${publishedYMD}T00:00:00Z`);
-  if (!Number.isFinite(pub)) return "";
-  const days = Math.floor((noteDateMs - pub) / 86400000);
-  const months = Math.floor(days / 30.44);
-  if (months < 1) return ""; // fresher than ~a month — no age context needed
-  if (months < 12) return ` (~${months} month${months === 1 ? "" : "s"} before this note)`;
-  const years = Math.floor(days / 365.25);
-  return ` (~${years} year${years === 1 ? "" : "s"} before this note)`;
-}
-
 function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, fixedTranscript, videoUrl, tags }) {
   const header = [
     `#### ${date}  ${time}`,
@@ -49,7 +34,7 @@ function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, f
     `###### Channel: ${channel || ""}`
   ];
   if (publishedDate) {
-    header.push("", `###### Published: ${publishedDate}${publishedAgeLabel(publishedDate)}`);
+    header.push("", `###### Published: ${publishedDate}`);
   }
   const tagLine = ["#VN", ...(Array.isArray(tags) ? tags : []).map((t) => `#${t.replace(/^#/, "")}`)].join(" ");
   return [
@@ -71,7 +56,7 @@ function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, f
   ].join("\n");
 }
 
-function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl, location }) {
+function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location }) {
   const body = (structuredContent || "").trim();
   const frontmatterLines = ["---", "aliases: []"];
   if (location) {
@@ -83,8 +68,6 @@ function buildDictionaryMarkdown({ date, title, structuredContent, sourceUrl, lo
     ...frontmatterLines,
     "",
     `#### ${date}`,
-    "",
-    `# ${title || "Untitled"}`,
     "",
     body || "No article details were generated.",
     "",
@@ -127,6 +110,26 @@ function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headqu
   ].join("\n");
 }
 
+
+// Defensive strip for the video summary: despite the prompt asking for paragraphs only,
+// the model sometimes prepends a title/heading line (echoing "Video Title: ..." verbatim,
+// or a Markdown heading/bold-only line) before the actual summary. Removes any such leading
+// lines so the note's "## Summary:" section isn't followed by a redundant title.
+function stripLeadingTitleLine(content) {
+  const lines = (content || "").trim().split("\n");
+  while (lines.length) {
+    const first = lines[0].trim();
+    const isHeading = /^#{1,6}\s+\S/.test(first);
+    const isBoldOnlyLine = /^\*\*[^*]+\*\*$/.test(first);
+    const isTitleEcho = /^(video\s+)?title\s*:/i.test(first);
+    if (!first || isHeading || isBoldOnlyLine || isTitleEcho) {
+      lines.shift();
+      continue;
+    }
+    break;
+  }
+  return lines.join("\n").trim();
+}
 
 function normalizeDictionaryContent(content) {
   let text = (content || "").trim();
@@ -625,7 +628,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     {
       role: "user",
       content:
-        `Write a detailed summary (3–5 paragraphs; each 3–6 sentences) of the transcript below. Use concise, readable Markdown. No timestamps.\n\nVideo Title: ${meta.title || ""}\nChannel: ${meta.channel || ""}\n\nTRANSCRIPT:\n` +
+        `Write a detailed summary (3–5 paragraphs; each 3–6 sentences) of the transcript below. Use concise, readable Markdown. No timestamps. Do not include a title, heading, or the video's name — output only the summary paragraphs themselves.\n\nVideo Title: ${meta.title || ""}\nChannel: ${meta.channel || ""}\n\nTRANSCRIPT:\n` +
         fixedTranscript.slice(0, 180000)
     }
   ];
@@ -644,7 +647,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
       stopHeartbeat(hb);
     }
   }
-  summary = (summary || "").trim();
+  summary = stripLeadingTitleLine(summary);
 
   // Tag selection from the vault pool — silently applied; the user edits during
   // note review. Any failure (scan, LLM, parse) degrades to just #VN, never blocks.
@@ -768,7 +771,6 @@ ${extract.slice(0, 180000)}`
   const { date } = nowDateTimeStrings();
   const markdown = buildDictionaryMarkdown({
     date,
-    title: articleTitle,
     structuredContent: normalizeDictionaryContent(structuredContent),
     sourceUrl: articleUrl,
     location: wikiData?.location || null
