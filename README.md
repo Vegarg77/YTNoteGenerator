@@ -79,12 +79,15 @@ BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49
 
 Optional overrides supported by the server:
 
-- `OPENAI_MODEL` (default `gpt-4o-mini`)
-- `OPENAI_BASE_URL` (default `https://api.openai.com`) — point at any OpenAI-compatible API.
-  **To use DeepSeek:** set `OPENAI_BASE_URL=https://api.deepseek.com`, `OPENAI_MODEL=deepseek-chat`,
-  and `OPENAI_API_KEY=<your DeepSeek key>` (in `.env` or the in-app Settings panel). Prefer
-  `deepseek-chat` (non-reasoning) over `deepseek-v4-flash`/`-pro` — the reasoning models are slower
-  and pricier for no quality gain on transcript cleanup/summarization.
+- `OPENAI_MODEL` (default `deepseek-v4-flash`)
+- `OPENAI_BASE_URL` (default `https://api.deepseek.com`) — point at any OpenAI-compatible API.
+  **To use OpenAI instead:** set `OPENAI_BASE_URL=https://api.openai.com`, `OPENAI_MODEL=gpt-4o-mini`
+  (or another OpenAI model), and `OPENAI_API_KEY=<your OpenAI key>` (in `.env` or the in-app
+  Settings panel). For DeepSeek, prefer `deepseek-v4-flash` (fast, non-reasoning) over
+  `deepseek-v4-pro` — the reasoning model is slower and pricier for no quality gain on transcript
+  cleanup/summarization. Note: `deepseek-chat` is NOT a valid model name on some DeepSeek
+  accounts/endpoints (some reject it with "supported API model names are deepseek-v4-pro or
+  deepseek-v4-flash") — use `deepseek-v4-flash` explicitly.
 - `PORT` (default `5173`)
 - `BRIGHT_DATA_API_BASE` (default `https://api.brightdata.com`)
 - `BRIGHT_DATA_TIMEOUT_MS` (default `120000`)
@@ -132,8 +135,8 @@ docker run -d \
     -v /path/to/business:/data/business \
     -v /etc/localtime:/etc/localtime:ro \
     -e OPENAI_API_KEY=your-api-key \
-    -e OPENAI_MODEL=gpt-4o-mini \
-    -e OPENAI_BASE_URL=https://api.openai.com \
+    -e OPENAI_MODEL=deepseek-v4-flash \
+    -e OPENAI_BASE_URL=https://api.deepseek.com \
     -e BRIGHT_DATA_API_TOKEN=your-bright-data-token \
     -e BRIGHT_DATA_YT_DATASET_ID=your-dataset-id \
     -e BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49 \
@@ -149,7 +152,7 @@ Replace the `/path/to/...` volume mounts with directories on your host where you
 
 1. Paste one or more YouTube URLs (spaces/newlines/comma separated).
 2. Enter your OpenAI API key (or set it in settings).
-3. Choose model + API Base URL (default OpenAI `gpt-4o-mini`; for DeepSeek use base `https://api.deepseek.com` + model `deepseek-chat`). GPT-5 family routes through OpenAI's Responses API; all other models (incl. DeepSeek) use Chat Completions.
+3. Choose model + API Base URL (default DeepSeek `deepseek-v4-flash` at `https://api.deepseek.com`; for OpenAI use base `https://api.openai.com` + a model like `gpt-4o-mini`). GPT-5 family routes through OpenAI's Responses API; all other models (incl. DeepSeek) use Chat Completions.
 4. Click **Generate Obsidian Note**.
 5. Copy combined markdown output and/or use saved files from the configured note directory.
 6. Use **Retry Failed** to re-process any videos that failed.

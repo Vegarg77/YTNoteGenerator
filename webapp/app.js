@@ -10,7 +10,7 @@ const copyStatus = el("copyStatus");
 const selectedWikiTerms = [];
 const selectedWikiBusinesses = [];
 
-let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "gpt-4o-mini", OPENAI_BASE_URL: "https://api.openai.com" };
+let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "deepseek-v4-flash", OPENAI_BASE_URL: "https://api.deepseek.com" };
 let wikiTermSuggestionTimer = null;
 let wikiBusinessSuggestionTimer = null;
 let wikiTermSuggestionRequestId = 0;
@@ -357,7 +357,7 @@ async function saveNoteToServer({ markdown, noteTitle, noteType }) {
 
 // Base URL of the LLM API (OpenAI or any compatible provider, e.g. DeepSeek).
 function llmBaseUrl() {
-  return (appSettings.OPENAI_BASE_URL || "https://api.openai.com").replace(/\/+$/, "");
+  return (appSettings.OPENAI_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, "");
 }
 function isOpenAIBase(baseUrl) {
   return /(^|\.)openai\.com$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
@@ -1087,8 +1087,8 @@ function populateSettingsForm(data) {
   el("settingTagExclude").value = data.TAG_EXCLUDE || "VN";
   el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
   el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
-  el("settingModel").value = data.OPENAI_MODEL || "gpt-4o-mini";
-  el("settingBaseUrl").value = data.OPENAI_BASE_URL || "https://api.openai.com";
+  el("settingModel").value = data.OPENAI_MODEL || "deepseek-v4-flash";
+  el("settingBaseUrl").value = data.OPENAI_BASE_URL || "https://api.deepseek.com";
   el("settingBdTimeout").value = data.BRIGHT_DATA_TIMEOUT_MS || 120000;
 }
 
@@ -1106,8 +1106,8 @@ async function saveSettings() {
     TAG_EXCLUDE: el("settingTagExclude").value.trim() || "VN",
     OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
     BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
-    OPENAI_MODEL: el("settingModel").value.trim() || "gpt-4o-mini",
-    OPENAI_BASE_URL: el("settingBaseUrl").value.trim().replace(/\/+$/, "") || "https://api.openai.com",
+    OPENAI_MODEL: el("settingModel").value.trim() || "deepseek-v4-flash",
+    OPENAI_BASE_URL: el("settingBaseUrl").value.trim().replace(/\/+$/, "") || "https://api.deepseek.com",
     BRIGHT_DATA_TIMEOUT_MS: el("settingBdTimeout").value.trim() || "120000",
   };
 
@@ -1160,7 +1160,7 @@ async function runYoutube() {
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
   const videoUrlsRaw = el("videoUrl").value;
-  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
   const videoUrls = parseVideoUrls(videoUrlsRaw);
 
   el("videoUrl").value = "";
@@ -1218,7 +1218,7 @@ async function runWikipedia() {
   copyStatus.textContent = "";
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
-  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
   const terms = [...selectedWikiTerms];
   const businesses = [...selectedWikiBusinesses];
 
@@ -1272,7 +1272,7 @@ async function retryFailed() {
   if (!failedVideoUrls.length || isProcessing) return;
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
-  const model = (appSettings.OPENAI_MODEL || "gpt-4o-mini").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
 
   if (!apiKey) {
     inputErr.textContent = "Please set your OpenAI API key in Settings (gear icon).";
