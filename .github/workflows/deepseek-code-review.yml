@@ -33,20 +33,57 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import os, sys, re, json, subprocess, urllib.request, urllib.error
+          import concurrent.futures
 
           def fail(msg):
               # A CONFIG/INFRA problem (bad key, API down, unparseable output) — make it
               # VISIBLE (red check) so it never silently "passes" like before.
               print(f"::error::{msg}")
-              sys.exit(1)
+              # os._exit (not sys.exit): guarantees the process actually terminates even
+              # if a fetch_body() worker thread is still blocked in a hung socket read —
+              # sys.exit() only raises SystemExit in the main thread and would otherwise
+              # wait on that non-daemon-unsafe edge case.
+              os._exit(1)
+
+          def fetch_body(req, timeout_s, label):
+              """Open `req` and read its full body under a HARD wall-clock deadline.
+
+              urllib's own `timeout=` on urlopen() only reliably bounds the connect and
+              each individual socket read call — it does NOT reliably bound the total
+              time to read a full response body on every code path. Observed directly
+              in this workflow: resp.read() blocked past its stated 150s timeout for
+              10+ minutes on an otherwise-healthy connection (urlopen() itself had
+              already returned quickly), with no error ever raised. Running the
+              open+read in a worker thread and enforcing the deadline via
+              Future.result(timeout=...) forces a real TimeoutError at exactly
+              timeout_s regardless of what the underlying socket call is doing.
+              ThreadPoolExecutor workers are daemon threads, so an abandoned hung
+              read never blocks process exit.
+              """
+              def _do():
+                  with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                      return resp.read()
+              ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+              fut = ex.submit(_do)
+              try:
+                  return fut.result(timeout=timeout_s)
+              except concurrent.futures.TimeoutError:
+                  fail(f"{label} timed out after {timeout_s}s (hard wall-clock deadline "
+                       f"— urllib's own timeout did not bound this call).")
+              finally:
+                  ex.shutdown(wait=False, cancel_futures=True)
 
           api_key = os.environ.get("OPENROUTER_API_KEY")
           if not api_key:
               fail("OPENROUTER_API_KEY secret is not set on this repo.")
-          gh_token  = os.environ["GITHUB_TOKEN"]
-          repo      = os.environ["REPO"]
-          pr_number = os.environ["PR_NUMBER"]
-          base_ref  = os.environ["BASE_REF"]
+          gh_token  = os.environ.get("GITHUB_TOKEN")
+          if not gh_token:
+              fail("GITHUB_TOKEN is not available to the workflow.")
+          repo      = os.environ.get("REPO", "")
+          pr_number = os.environ.get("PR_NUMBER", "")
+          base_ref  = os.environ.get("BASE_REF", "")
+          if not (repo and pr_number and base_ref):
+              fail("Missing PR context (REPO / PR_NUMBER / BASE_REF).")
           commit    = os.environ.get("COMMIT_SHA", "")[:7]
           model     = os.environ.get("REVIEW_MODEL", "deepseek/deepseek-v4-flash-0731")
 
@@ -126,10 +163,8 @@ jobs:
               data=json.dumps(payload).encode(),
               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
           try:
-              resp = urllib.request.urlopen(req, timeout=150)
-              print("OpenRouter responded, parsing...", flush=True)
-              content = json.loads(resp.read())["choices"][0]["message"]["content"]
-              print(f"Response body parsed: {len(content)} chars", flush=True)
+              body = fetch_body(req, 150, "OpenRouter API call")
+              content = json.loads(body)["choices"][0]["message"]["content"]
           except urllib.error.HTTPError as e:
               fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
@@ -152,7 +187,6 @@ jobs:
               return None
 
           data = parse_json(content)
-          print("JSON parsed.", flush=True)
           if data is None:
               print("Model output (unparseable):\n" + content[:600])
               fail("Could not parse the model's JSON output.")
@@ -180,7 +214,6 @@ jobs:
                   loc = f"`{path}`" + (f":{ln}" if ln else "")
                   unmapped.append(f"- {loc} — {body}")
 
-          print("Findings processed, building header...", flush=True)
           # Advisory review body. event=COMMENT never blocks the PR — findings are advisory,
           # exactly like Codex review, so the check still PASSES even when issues are found.
           header = "## 🤖 DeepSeek Code Review\n\n"
@@ -209,7 +242,7 @@ jobs:
                   headers={"Authorization": f"Bearer {gh_token}",
                            "Accept": "application/vnd.github+json",
                            "Content-Type": "application/json"})
-              urllib.request.urlopen(r, timeout=30)
+              fetch_body(r, 30, "GitHub review POST")
 
           print(f"Posting review: {len(inline)} inline comment(s)...", flush=True)
           try:
