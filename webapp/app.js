@@ -10,7 +10,7 @@ const copyStatus = el("copyStatus");
 const selectedWikiTerms = [];
 const selectedWikiBusinesses = [];
 
-let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "deepseek-v4-flash", OPENAI_BASE_URL: "https://api.deepseek.com" };
+let appSettings = { OPENAI_API_KEY: "", OPENAI_MODEL: "deepseek/deepseek-v4-flash-0731", OPENAI_BASE_URL: "https://openrouter.ai/api" };
 let wikiTermSuggestionTimer = null;
 let wikiBusinessSuggestionTimer = null;
 let wikiTermSuggestionRequestId = 0;
@@ -355,13 +355,24 @@ async function saveNoteToServer({ markdown, noteTitle, noteType }) {
   return resp.json();
 }
 
-// Base URL of the LLM API (OpenAI or any compatible provider, e.g. DeepSeek).
+// Base URL of the LLM API (OpenAI or any compatible provider, e.g. OpenRouter/DeepSeek).
 function llmBaseUrl() {
-  return (appSettings.OPENAI_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, "");
+  return (appSettings.OPENAI_BASE_URL || "https://openrouter.ai/api").replace(/\/+$/, "");
 }
 function isOpenAIBase(baseUrl) {
   return /(^|\.)openai\.com$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
 }
+function isOpenRouterBase(baseUrl) {
+  return /(^|\.)openrouter\.ai$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
+}
+// Same cost/reliability policy as this project's Hermes agent config and CI code-review
+// workflow: cap spend at $0.22/M prompt + $0.66/M completion tokens, but sort the eligible
+// providers by throughput rather than raw price — sort:price alone was found to pick
+// intermittently slow/hanging cheap backends despite them reporting healthy status.
+const OPENROUTER_PROVIDER_ROUTING = {
+  sort: "throughput",
+  max_price: { prompt: 0.22, completion: 0.66 }
+};
 
 async function openaiChatCompletions({ apiKey, body, signal, baseUrl }) {
   const resp = await fetch(`${baseUrl || llmBaseUrl()}/v1/chat/completions`, {
@@ -439,7 +450,8 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
     body: {
       model,
       temperature,
-      messages
+      messages,
+      ...(isOpenRouterBase(baseUrl) ? { provider: OPENROUTER_PROVIDER_ROUTING } : {})
     }
   });
 }
@@ -1087,8 +1099,8 @@ function populateSettingsForm(data) {
   el("settingTagExclude").value = data.TAG_EXCLUDE || "VN";
   el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
   el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
-  el("settingModel").value = data.OPENAI_MODEL || "deepseek-v4-flash";
-  el("settingBaseUrl").value = data.OPENAI_BASE_URL || "https://api.deepseek.com";
+  el("settingModel").value = data.OPENAI_MODEL || "deepseek/deepseek-v4-flash-0731";
+  el("settingBaseUrl").value = data.OPENAI_BASE_URL || "https://openrouter.ai/api";
   el("settingBdTimeout").value = data.BRIGHT_DATA_TIMEOUT_MS || 120000;
 }
 
@@ -1106,8 +1118,8 @@ async function saveSettings() {
     TAG_EXCLUDE: el("settingTagExclude").value.trim() || "VN",
     OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
     BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
-    OPENAI_MODEL: el("settingModel").value.trim() || "deepseek-v4-flash",
-    OPENAI_BASE_URL: el("settingBaseUrl").value.trim().replace(/\/+$/, "") || "https://api.deepseek.com",
+    OPENAI_MODEL: el("settingModel").value.trim() || "deepseek/deepseek-v4-flash-0731",
+    OPENAI_BASE_URL: el("settingBaseUrl").value.trim().replace(/\/+$/, "") || "https://openrouter.ai/api",
     BRIGHT_DATA_TIMEOUT_MS: el("settingBdTimeout").value.trim() || "120000",
   };
 
@@ -1160,7 +1172,7 @@ async function runYoutube() {
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
   const videoUrlsRaw = el("videoUrl").value;
-  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek/deepseek-v4-flash-0731").trim();
   const videoUrls = parseVideoUrls(videoUrlsRaw);
 
   el("videoUrl").value = "";
@@ -1218,7 +1230,7 @@ async function runWikipedia() {
   copyStatus.textContent = "";
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
-  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek/deepseek-v4-flash-0731").trim();
   const terms = [...selectedWikiTerms];
   const businesses = [...selectedWikiBusinesses];
 
@@ -1272,7 +1284,7 @@ async function retryFailed() {
   if (!failedVideoUrls.length || isProcessing) return;
 
   const apiKey = (appSettings.OPENAI_API_KEY || "").trim();
-  const model = (appSettings.OPENAI_MODEL || "deepseek-v4-flash").trim();
+  const model = (appSettings.OPENAI_MODEL || "deepseek/deepseek-v4-flash-0731").trim();
 
   if (!apiKey) {
     inputErr.textContent = "Please set your OpenAI API key in Settings (gear icon).";
