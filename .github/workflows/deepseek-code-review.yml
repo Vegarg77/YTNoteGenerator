@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
 
       - name: Review PR with DeepSeek
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
