@@ -153,16 +153,18 @@ jobs:
               "messages": [{"role": "user", "content": prompt}],
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
-              # Route to the cheapest OpenRouter backend under a price ceiling
-              # (same policy as the Hermes agent config). StreamLake excluded:
-              # confirmed via direct diagnostic (2026-08-19) to be an intermittently
-              # slow/hanging backend under this ceiling (70s-150s+ vs. ~15-20s for
-              # other cheap providers like DigitalOcean on an identical payload) —
-              # this is what was causing this workflow's repeated 150s hard timeouts.
+              # Route to the FASTEST OpenRouter backend among those under a price
+              # ceiling (max_price is a hard filter regardless of sort). Excluding
+              # StreamLake alone wasn't enough — diagnostic (2026-08-19) showed ~25
+              # providers qualify under this ceiling, and sort:price always picked
+              # the single cheapest one, several of which (StreamLake, then whatever
+              # was next) proved intermittently slow/hanging on this payload shape
+              # even while reporting healthy status. sort:throughput fixes this
+              # structurally: still bounded by max_price, but picks for speed among
+              # the eligible set instead of blindly picking the cheapest.
               "provider": {
-                  "sort": "price",
+                  "sort": "throughput",
                   "max_price": {"prompt": 0.22, "completion": 0.66},
-                  "ignore": ["streamlake"],
               },
           }
           req = urllib.request.Request(
