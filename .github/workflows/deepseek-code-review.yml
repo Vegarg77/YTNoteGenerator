@@ -154,10 +154,15 @@ jobs:
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
               # Route to the cheapest OpenRouter backend under a price ceiling
-              # (same policy as the Hermes agent config).
+              # (same policy as the Hermes agent config). StreamLake excluded:
+              # confirmed via direct diagnostic (2026-08-19) to be an intermittently
+              # slow/hanging backend under this ceiling (70s-150s+ vs. ~15-20s for
+              # other cheap providers like DigitalOcean on an identical payload) —
+              # this is what was causing this workflow's repeated 150s hard timeouts.
               "provider": {
                   "sort": "price",
                   "max_price": {"prompt": 0.22, "completion": 0.66},
+                  "ignore": ["streamlake"],
               },
           }
           req = urllib.request.Request(
