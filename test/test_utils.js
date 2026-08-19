@@ -305,7 +305,7 @@ describe("getConfig", () => {
     }
     try {
       const c = cfg.getConfig();
-      assert.strictEqual(c.OPENAI_MODEL, "gpt-4o-mini");
+      assert.strictEqual(c.OPENAI_MODEL, "deepseek/deepseek-v4-flash-0731");
       assert.strictEqual(c.BRIGHT_DATA_WIKI_DATASET_ID, "gd_lr9978962kkjr3nx49");
       assert.strictEqual(c.BRIGHT_DATA_TIMEOUT_MS, 120000);
       assert.strictEqual(c.BRIGHT_DATA_POLL_INTERVAL_MS, 2000);
