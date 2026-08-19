@@ -129,6 +129,7 @@ jobs:
               resp = urllib.request.urlopen(req, timeout=150)
               print("OpenRouter responded, parsing...", flush=True)
               content = json.loads(resp.read())["choices"][0]["message"]["content"]
+              print(f"Response body parsed: {len(content)} chars", flush=True)
           except urllib.error.HTTPError as e:
               fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
@@ -151,13 +152,14 @@ jobs:
               return None
 
           data = parse_json(content)
+          print("JSON parsed.", flush=True)
           if data is None:
               print("Model output (unparseable):\n" + content[:600])
               fail("Could not parse the model's JSON output.")
 
           summary  = str(data.get("summary", "")).strip()
           findings = data.get("findings") or []
-          print(f"{len(findings)} finding(s)")
+          print(f"{len(findings)} finding(s)", flush=True)
 
           SEV = {"BUG": "🐛 BUG", "SECURITY": "🔒 SECURITY", "SEC": "🔒 SECURITY",
                  "PERF": "⚡ PERF", "STYLE": "🎨 STYLE"}
@@ -178,6 +180,7 @@ jobs:
                   loc = f"`{path}`" + (f":{ln}" if ln else "")
                   unmapped.append(f"- {loc} — {body}")
 
+          print("Findings processed, building header...", flush=True)
           # Advisory review body. event=COMMENT never blocks the PR — findings are advisory,
           # exactly like Codex review, so the check still PASSES even when issues are found.
           header = "## 🤖 DeepSeek Code Review\n\n"
