@@ -208,6 +208,7 @@ jobs:
                            "Content-Type": "application/json"})
               urllib.request.urlopen(r, timeout=30)
 
+          print(f"Posting review: {len(inline)} inline comment(s)...", flush=True)
           try:
               post_review(inline)
               print("Review posted.")
