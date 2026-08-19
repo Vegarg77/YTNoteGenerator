@@ -22,13 +22,13 @@ jobs:
 
       - name: Review PR with DeepSeek
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEW_MODEL: deepseek-v4-flash
+          REVIEW_MODEL: deepseek/deepseek-v4-flash-0731
         run: |
           python3 << 'PYEOF'
           import os, sys, re, json, subprocess, urllib.request, urllib.error
@@ -39,15 +39,15 @@ jobs:
               print(f"::error::{msg}")
               sys.exit(1)
 
-          api_key = os.environ.get("DEEPSEEK_API_KEY")
+          api_key = os.environ.get("OPENROUTER_API_KEY")
           if not api_key:
-              fail("DEEPSEEK_API_KEY secret is not set on this repo.")
+              fail("OPENROUTER_API_KEY secret is not set on this repo.")
           gh_token  = os.environ["GITHUB_TOKEN"]
           repo      = os.environ["REPO"]
           pr_number = os.environ["PR_NUMBER"]
           base_ref  = os.environ["BASE_REF"]
           commit    = os.environ.get("COMMIT_SHA", "")[:7]
-          model     = os.environ.get("REVIEW_MODEL", "deepseek-v4-flash")
+          model     = os.environ.get("REVIEW_MODEL", "deepseek/deepseek-v4-flash-0731")
 
           # --- Diff (only the PR's changes) ---
           merge_base = subprocess.run(
@@ -110,18 +110,24 @@ jobs:
               "messages": [{"role": "user", "content": prompt}],
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
+              # Route to the cheapest OpenRouter backend under a price ceiling
+              # (same policy as the Hermes agent config).
+              "provider": {
+                  "sort": "price",
+                  "max_price": {"prompt": 0.22, "completion": 0.66},
+              },
           }
           req = urllib.request.Request(
-              "https://api.deepseek.com/v1/chat/completions",
+              "https://openrouter.ai/api/v1/chat/completions",
               data=json.dumps(payload).encode(),
               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
           try:
               resp = urllib.request.urlopen(req, timeout=150)
               content = json.loads(resp.read())["choices"][0]["message"]["content"]
           except urllib.error.HTTPError as e:
-              fail(f"DeepSeek API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
+              fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
-              fail(f"DeepSeek API call failed: {e}")
+              fail(f"OpenRouter API call failed: {e}")
 
           def parse_json(s):
               s = s.strip()
