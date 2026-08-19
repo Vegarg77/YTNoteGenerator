@@ -21,6 +21,7 @@ jobs:
           python-version: '3.12'
 
       - name: Review PR with DeepSeek
+        timeout-minutes: 5
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,6 +60,8 @@ jobs:
           if not raw_diff.strip():
               print("No diff — nothing to review.")
               sys.exit(0)
+          print(f"Diff computed: {len(raw_diff)} chars, "
+                f"merge_base={merge_base[:12]}", flush=True)
 
           # Annotate added lines with their NEW-file line number and record valid
           # (file, line) targets so we can post inline comments GitHub will accept.
@@ -105,6 +108,7 @@ jobs:
               "`line` must be one of the prefixed added-line numbers.\n\nDiff:\n" + diff_text
           )
 
+          print(f"Prompt built: {len(prompt)} chars. Calling OpenRouter...", flush=True)
           payload = {
               "model": model,
               "messages": [{"role": "user", "content": prompt}],
@@ -123,6 +127,7 @@ jobs:
               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
           try:
               resp = urllib.request.urlopen(req, timeout=150)
+              print("OpenRouter responded, parsing...", flush=True)
               content = json.loads(resp.read())["choices"][0]["message"]["content"]
           except urllib.error.HTTPError as e:
               fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
