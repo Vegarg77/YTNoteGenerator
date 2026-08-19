@@ -39,6 +39,8 @@ jobs:
               # A CONFIG/INFRA problem (bad key, API down, unparseable output) — make it
               # VISIBLE (red check) so it never silently "passes" like before.
               print(f"::error::{msg}")
+              sys.stdout.flush()
+              sys.stderr.flush()
               # os._exit (not sys.exit): guarantees the process actually terminates even
               # if a fetch_body() worker thread is still blocked in a hung socket read —
               # sys.exit() only raises SystemExit in the main thread and would otherwise
