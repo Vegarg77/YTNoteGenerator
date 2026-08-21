@@ -153,6 +153,16 @@ jobs:
               "messages": [{"role": "user", "content": prompt}],
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
+              # Explicit completion budget (2026-08-21): without this, at least one
+              # provider under the price ceiling below has been observed returning
+              # choices[0].message.content == null for large diffs (~44K-char diff /
+              # ~48K-char prompt) on this exact model — a real, reproducible failure,
+              # not the request timing out (the HTTP call itself returns well inside
+              # the deadline). Matches this project's own established DeepSeek-family
+              # finding (ORCHESTRATION.md: "deepseek-v4-pro ... empty content = budget
+              # too small" — same symptom, same family of models). 8000 mirrors that
+              # same known-good default.
+              "max_tokens": 8000,
               # Route to the FASTEST OpenRouter backend among those under a price
               # ceiling (max_price is a hard filter regardless of sort). Excluding
               # StreamLake alone wasn't enough — diagnostic (2026-08-19) showed ~25
@@ -178,6 +188,16 @@ jobs:
               fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
               fail(f"OpenRouter API call failed: {e}")
+          # 2026-08-21: content == null has been observed twice on this exact model/
+          # provider-routing combo for large diffs (see the max_tokens comment above)
+          # — surface it as a clear, diagnosable CI failure instead of letting it crash
+          # later in parse_json() with a bare "'NoneType' object has no attribute
+          # 'strip'" traceback.
+          if content is None:
+              fail("OpenRouter returned an empty completion (choices[0].message.content "
+                   "was null) — likely an insufficient max_tokens budget for this diff's "
+                   "size, or provider-side truncation. Raw response body (first 500 "
+                   f"chars): {body[:500]!r}")
 
           def parse_json(s):
               s = s.strip()
