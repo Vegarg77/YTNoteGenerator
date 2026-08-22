@@ -153,15 +153,28 @@ jobs:
               "messages": [{"role": "user", "content": prompt}],
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
-              # Explicit completion budget (2026-08-21): without this, at least one
-              # provider under the price ceiling below has been observed returning
-              # choices[0].message.content == null for large diffs (~44K-char diff /
-              # ~48K-char prompt) on this exact model — a real, reproducible failure,
-              # not the request timing out (the HTTP call itself returns well inside
-              # the deadline). Matches this project's own established DeepSeek-family
-              # finding (ORCHESTRATION.md: "deepseek-v4-pro ... empty content = budget
-              # too small" — same symptom, same family of models). 8000 mirrors that
-              # same known-good default.
+              # ROOT-CAUSE FIX (2026-08-21). `deepseek-v4-flash-0731` is a REASONING
+              # model, and OpenRouter leaves reasoning ON by default. On a large
+              # prompt it spent its ENTIRE completion budget thinking and never
+              # emitted a single content token — so the API returned a perfectly
+              # healthy 200 OK whose choices[0].message.content was null.
+              # Reproduced live against this exact payload (37,466-char prompt):
+              # provider "Reka", finish_reason/native_finish_reason "length",
+              # completion_tokens 8000 (== the cap), reasoning_tokens 6554,
+              # message.reasoning 25,934 chars, message.content null.
+              # Raising max_tokens does NOT fix this — a reasoning model handed a
+              # bigger budget simply thinks longer. That was the first attempted fix
+              # and it failed identically three runs in a row.
+              # `reasoning.effort: "none"` is OpenRouter's documented switch for
+              # disabling reasoning outright:
+              #   https://openrouter.ai/docs/use-cases/reasoning-tokens
+              # With it: reasoning_tokens 0, finish_reason "stop", ~250 completion
+              # tokens of clean JSON, and ~3x cheaper ($0.0080 -> $0.0028 per call).
+              # Verified 5/5 consecutive live calls on the real failing diff.
+              "reasoning": {"effort": "none"},
+              # Completion cap. With reasoning disabled the real answer is only
+              # ~250 tokens, so this is now just a runaway guard rather than a
+              # load-bearing budget.
               "max_tokens": 8000,
               # Route to the FASTEST OpenRouter backend among those under a price
               # ceiling (max_price is a hard filter regardless of sort). Excluding
@@ -183,21 +196,36 @@ jobs:
               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
           try:
               body = fetch_body(req, 150, "OpenRouter API call")
-              content = json.loads(body)["choices"][0]["message"]["content"]
+              resp_obj = json.loads(body)
+              content = resp_obj["choices"][0]["message"]["content"]
           except urllib.error.HTTPError as e:
               fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
               fail(f"OpenRouter API call failed: {e}")
-          # 2026-08-21: content == null has been observed twice on this exact model/
-          # provider-routing combo for large diffs (see the max_tokens comment above)
-          # — surface it as a clear, diagnosable CI failure instead of letting it crash
-          # later in parse_json() with a bare "'NoneType' object has no attribute
-          # 'strip'" traceback.
+          # Surface a null completion as a clear, diagnosable CI failure instead of
+          # letting it crash later in parse_json() with a bare "'NoneType' object has
+          # no attribute 'strip'" traceback.
+          #
+          # Do NOT dump raw `body` bytes here. OpenRouter pads long-running
+          # non-streaming responses with keepalive whitespace, so the first ~500 bytes
+          # of a real response are pure "\n         \n\n" filler (measured: 495 bytes
+          # of it before the JSON even starts). Printing body[:500] showed nothing but
+          # that padding, which is what made this look like a wire/framing problem for
+          # three runs straight. json.loads() skips the padding fine — the actual
+          # signal lives in the parsed object's own fields, so report those.
           if content is None:
-              fail("OpenRouter returned an empty completion (choices[0].message.content "
-                   "was null) — likely an insufficient max_tokens budget for this diff's "
-                   "size, or provider-side truncation. Raw response body (first 500 "
-                   f"chars): {body[:500]!r}")
+              ch0  = (resp_obj.get("choices") or [{}])[0]
+              rsn  = (ch0.get("message") or {}).get("reasoning")
+              fail("OpenRouter returned an empty completion "
+                   "(choices[0].message.content was null). "
+                   f"provider={resp_obj.get('provider')!r} "
+                   f"finish_reason={ch0.get('finish_reason')!r} "
+                   f"native_finish_reason={ch0.get('native_finish_reason')!r} "
+                   f"usage={resp_obj.get('usage')} "
+                   f"reasoning_len={len(rsn) if isinstance(rsn, str) else 0}. "
+                   "A 'length' finish_reason together with a large reasoning_len means "
+                   "the model burned its whole budget reasoning — verify the payload's "
+                   "reasoning.effort is still 'none'.")
 
           def parse_json(s):
               s = s.strip()
