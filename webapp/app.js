@@ -365,13 +365,16 @@ function isOpenAIBase(baseUrl) {
 function isOpenRouterBase(baseUrl) {
   return /(^|\.)openrouter\.ai$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
 }
-// Same cost/reliability policy as this project's Hermes agent config and CI code-review
-// workflow: cap spend at $0.22/M prompt + $0.66/M completion tokens, but sort the eligible
-// providers by throughput rather than raw price — sort:price alone was found to pick
-// intermittently slow/hanging cheap backends despite them reporting healthy status.
+// Same provider policy as this project's Hermes agent config and CI code-review
+// workflow: pin every OpenRouter call to the Reka backend (order:["reka"]) so the
+// prompt cache actually builds and hits across all traffic sources, carrying the deep
+// cache-read discount (~$0.007/M). allow_fallbacks:false means a Reka outage fails the
+// request rather than silently bouncing to a cold provider and nuking the cache.
+// Only applies when the base URL is OpenRouter — DeepSeek-direct and OpenAI bases are
+// untouched.
 const OPENROUTER_PROVIDER_ROUTING = {
-  sort: "throughput",
-  max_price: { prompt: 0.22, completion: 0.66 }
+  order: ["reka"],
+  allow_fallbacks: false
 };
 
 async function openaiChatCompletions({ apiKey, body, signal, baseUrl }) {
