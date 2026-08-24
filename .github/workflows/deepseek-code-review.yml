@@ -186,8 +186,8 @@ jobs:
               # structurally: still bounded by max_price, but picks for speed among
               # the eligible set instead of blindly picking the cheapest.
               "provider": {
-                  "sort": "throughput",
-                  "max_price": {"prompt": 0.22, "completion": 0.66},
+                  "order": ["reka"],
+                  "allow_fallbacks": False,
               },
           }
           req = urllib.request.Request(
