@@ -21,73 +21,33 @@ jobs:
           python-version: '3.12'
 
       - name: Review PR with DeepSeek
-        timeout-minutes: 10
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-          REVIEW_MODEL: deepseek/deepseek-v4-flash-0731
+          REVIEW_MODEL: deepseek-v4-flash
         run: |
           python3 << 'PYEOF'
           import os, sys, re, json, subprocess, urllib.request, urllib.error
-          import concurrent.futures
 
           def fail(msg):
               # A CONFIG/INFRA problem (bad key, API down, unparseable output) — make it
               # VISIBLE (red check) so it never silently "passes" like before.
               print(f"::error::{msg}")
-              sys.stdout.flush()
-              sys.stderr.flush()
-              # os._exit (not sys.exit): guarantees the process actually terminates even
-              # if a fetch_body() worker thread is still blocked in a hung socket read —
-              # sys.exit() only raises SystemExit in the main thread and would otherwise
-              # wait on that non-daemon-unsafe edge case.
-              os._exit(1)
+              sys.exit(1)
 
-          def fetch_body(req, timeout_s, label):
-              """Open `req` and read its full body under a HARD wall-clock deadline.
-
-              urllib's own `timeout=` on urlopen() only reliably bounds the connect and
-              each individual socket read call — it does NOT reliably bound the total
-              time to read a full response body on every code path. Observed directly
-              in this workflow: resp.read() blocked past its stated 150s timeout for
-              10+ minutes on an otherwise-healthy connection (urlopen() itself had
-              already returned quickly), with no error ever raised. Running the
-              open+read in a worker thread and enforcing the deadline via
-              Future.result(timeout=...) forces a real TimeoutError at exactly
-              timeout_s regardless of what the underlying socket call is doing.
-              ThreadPoolExecutor workers are daemon threads, so an abandoned hung
-              read never blocks process exit.
-              """
-              def _do():
-                  with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                      return resp.read()
-              ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-              fut = ex.submit(_do)
-              try:
-                  return fut.result(timeout=timeout_s)
-              except concurrent.futures.TimeoutError:
-                  fail(f"{label} timed out after {timeout_s}s (hard wall-clock deadline "
-                       f"— urllib's own timeout did not bound this call).")
-              finally:
-                  ex.shutdown(wait=False, cancel_futures=True)
-
-          api_key = os.environ.get("OPENROUTER_API_KEY")
+          api_key = os.environ.get("DEEPSEEK_API_KEY")
           if not api_key:
-              fail("OPENROUTER_API_KEY secret is not set on this repo.")
-          gh_token  = os.environ.get("GITHUB_TOKEN")
-          if not gh_token:
-              fail("GITHUB_TOKEN is not available to the workflow.")
-          repo      = os.environ.get("REPO", "")
-          pr_number = os.environ.get("PR_NUMBER", "")
-          base_ref  = os.environ.get("BASE_REF", "")
-          if not (repo and pr_number and base_ref):
-              fail("Missing PR context (REPO / PR_NUMBER / BASE_REF).")
+              fail("DEEPSEEK_API_KEY secret is not set on this repo.")
+          gh_token  = os.environ["GITHUB_TOKEN"]
+          repo      = os.environ["REPO"]
+          pr_number = os.environ["PR_NUMBER"]
+          base_ref  = os.environ["BASE_REF"]
           commit    = os.environ.get("COMMIT_SHA", "")[:7]
-          model     = os.environ.get("REVIEW_MODEL", "deepseek/deepseek-v4-flash-0731")
+          model     = os.environ.get("REVIEW_MODEL", "deepseek-v4-flash")
 
           # --- Diff (only the PR's changes) ---
           merge_base = subprocess.run(
@@ -99,8 +59,6 @@ jobs:
           if not raw_diff.strip():
               print("No diff — nothing to review.")
               sys.exit(0)
-          print(f"Diff computed: {len(raw_diff)} chars, "
-                f"merge_base={merge_base[:12]}", flush=True)
 
           # Annotate added lines with their NEW-file line number and record valid
           # (file, line) targets so we can post inline comments GitHub will accept.
@@ -147,85 +105,23 @@ jobs:
               "`line` must be one of the prefixed added-line numbers.\n\nDiff:\n" + diff_text
           )
 
-          print(f"Prompt built: {len(prompt)} chars. Calling OpenRouter...", flush=True)
           payload = {
               "model": model,
               "messages": [{"role": "user", "content": prompt}],
               "temperature": 0.1,
               "response_format": {"type": "json_object"},
-              # ROOT-CAUSE FIX (2026-08-21). `deepseek-v4-flash-0731` is a REASONING
-              # model, and OpenRouter leaves reasoning ON by default. On a large
-              # prompt it spent its ENTIRE completion budget thinking and never
-              # emitted a single content token — so the API returned a perfectly
-              # healthy 200 OK whose choices[0].message.content was null.
-              # Reproduced live against this exact payload (37,466-char prompt):
-              # provider "Reka", finish_reason/native_finish_reason "length",
-              # completion_tokens 8000 (== the cap), reasoning_tokens 6554,
-              # message.reasoning 25,934 chars, message.content null.
-              # Raising max_tokens does NOT fix this — a reasoning model handed a
-              # bigger budget simply thinks longer. That was the first attempted fix
-              # and it failed identically three runs in a row.
-              # `reasoning.effort: "none"` is OpenRouter's documented switch for
-              # disabling reasoning outright:
-              #   https://openrouter.ai/docs/use-cases/reasoning-tokens
-              # With it: reasoning_tokens 0, finish_reason "stop", ~250 completion
-              # tokens of clean JSON, and ~3x cheaper ($0.0080 -> $0.0028 per call).
-              # Verified 5/5 consecutive live calls on the real failing diff.
-              "reasoning": {"effort": "none"},
-              # Completion cap. With reasoning disabled the real answer is only
-              # ~250 tokens, so this is now just a runaway guard rather than a
-              # load-bearing budget.
-              "max_tokens": 8000,
-              # Route to the FASTEST OpenRouter backend among those under a price
-              # ceiling (max_price is a hard filter regardless of sort). Excluding
-              # StreamLake alone wasn't enough — diagnostic (2026-08-19) showed ~25
-              # providers qualify under this ceiling, and sort:price always picked
-              # the single cheapest one, several of which (StreamLake, then whatever
-              # was next) proved intermittently slow/hanging on this payload shape
-              # even while reporting healthy status. sort:throughput fixes this
-              # structurally: still bounded by max_price, but picks for speed among
-              # the eligible set instead of blindly picking the cheapest.
-              "provider": {
-                  "order": ["reka"],
-                  "allow_fallbacks": False,
-              },
           }
           req = urllib.request.Request(
-              "https://openrouter.ai/api/v1/chat/completions",
+              "https://api.deepseek.com/v1/chat/completions",
               data=json.dumps(payload).encode(),
               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
           try:
-              body = fetch_body(req, 150, "OpenRouter API call")
-              resp_obj = json.loads(body)
-              content = resp_obj["choices"][0]["message"]["content"]
+              resp = urllib.request.urlopen(req, timeout=150)
+              content = json.loads(resp.read())["choices"][0]["message"]["content"]
           except urllib.error.HTTPError as e:
-              fail(f"OpenRouter API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
+              fail(f"DeepSeek API HTTP {e.code}: {e.read()[:200].decode(errors='ignore')}")
           except Exception as e:
-              fail(f"OpenRouter API call failed: {e}")
-          # Surface a null completion as a clear, diagnosable CI failure instead of
-          # letting it crash later in parse_json() with a bare "'NoneType' object has
-          # no attribute 'strip'" traceback.
-          #
-          # Do NOT dump raw `body` bytes here. OpenRouter pads long-running
-          # non-streaming responses with keepalive whitespace, so the first ~500 bytes
-          # of a real response are pure "\n         \n\n" filler (measured: 495 bytes
-          # of it before the JSON even starts). Printing body[:500] showed nothing but
-          # that padding, which is what made this look like a wire/framing problem for
-          # three runs straight. json.loads() skips the padding fine — the actual
-          # signal lives in the parsed object's own fields, so report those.
-          if content is None:
-              ch0  = (resp_obj.get("choices") or [{}])[0]
-              rsn  = (ch0.get("message") or {}).get("reasoning")
-              fail("OpenRouter returned an empty completion "
-                   "(choices[0].message.content was null). "
-                   f"provider={resp_obj.get('provider')!r} "
-                   f"finish_reason={ch0.get('finish_reason')!r} "
-                   f"native_finish_reason={ch0.get('native_finish_reason')!r} "
-                   f"usage={resp_obj.get('usage')} "
-                   f"reasoning_len={len(rsn) if isinstance(rsn, str) else 0}. "
-                   "A 'length' finish_reason together with a large reasoning_len means "
-                   "the model burned its whole budget reasoning — verify the payload's "
-                   "reasoning.effort is still 'none'.")
+              fail(f"DeepSeek API call failed: {e}")
 
           def parse_json(s):
               s = s.strip()
@@ -250,7 +146,7 @@ jobs:
 
           summary  = str(data.get("summary", "")).strip()
           findings = data.get("findings") or []
-          print(f"{len(findings)} finding(s)", flush=True)
+          print(f"{len(findings)} finding(s)")
 
           SEV = {"BUG": "🐛 BUG", "SECURITY": "🔒 SECURITY", "SEC": "🔒 SECURITY",
                  "PERF": "⚡ PERF", "STYLE": "🎨 STYLE"}
@@ -299,9 +195,8 @@ jobs:
                   headers={"Authorization": f"Bearer {gh_token}",
                            "Accept": "application/vnd.github+json",
                            "Content-Type": "application/json"})
-              fetch_body(r, 30, "GitHub review POST")
+              urllib.request.urlopen(r, timeout=30)
 
-          print(f"Posting review: {len(inline)} inline comment(s)...", flush=True)
           try:
               post_review(inline)
               print("Review posted.")
