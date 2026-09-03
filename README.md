@@ -105,9 +105,10 @@ Optional overrides supported by the server:
 - `OBSIDIAN_BUSINESS_DIR` — directory for saved business notes
 - `YTNG_ENV_FILE` — path of the settings file the app reads/writes (default `<repo>/.env`).
   The in-app settings panel persists changes to this file. Point it outside the repo, or
-  bind-mount a host file at the container path, to keep settings across reinstalls (see
-  Docker below). Launch-environment variables (shell export, `docker -e`, systemd) always
-  take precedence over values in this file.
+  keep it inside a host directory bind-mounted into the container, to keep settings
+  across reinstalls (see Docker below — mount the DIRECTORY, not the file: the app saves
+  atomically via tmp+rename, which fails over a single-file bind mount). Launch-environment
+  variables (shell export, `docker -e`, systemd) always take precedence over file values.
 
 Most of these can also be changed at runtime through the in-app settings panel; a save
 writes the panel values to the settings file (`YTNG_ENV_FILE`), which survives app updates
@@ -148,22 +149,26 @@ docker run -d \
     -v /path/to/notes:/data/notes \
     -v /path/to/dictionary:/data/dictionary \
     -v /path/to/business:/data/business \
-    -v /path/to/ytnotegenerator.env:/app/.env \
+    -v /path/to/ytnotegenerator-config:/app/config \
+    -e YTNG_ENV_FILE=/app/config/.env \
     -v /etc/localtime:/etc/localtime:ro \
     ytnotegenerator
 ```
 
 Replace the `/path/to/...` volume mounts with directories on your host where you want
-notes saved. Create `/path/to/ytnotegenerator.env` from `.env.example` and put your API
-keys, model, and `OBSIDIAN_NOTE_DIR=/data/notes`,
+notes saved. Create `/path/to/ytnotegenerator-config/.env` from `.env.example` and put
+your API keys, model, and `OBSIDIAN_NOTE_DIR=/data/notes`,
 `OBSIDIAN_DICTIONARY_DIR=/data/dictionary`, `OBSIDIAN_BUSINESS_DIR=/data/business` in it
 (the `/data/*` paths match the mounts above).
 
-**Settings survive reinstalls.** The container's settings file is a bind-mount of the host
-file, so every change made in the in-app settings panel is written to the host file and
-persists across image rebuilds and container recreation. Avoid passing these settings with
-`docker -e` if you want the panel to control them — launch-environment variables take
-precedence over the settings file, so a `-e` value would silently override panel edits.
+**Settings survive reinstalls.** The container's settings file lives in the mounted
+`/app/config` directory (a host directory — mount a directory, not the single file:
+the app writes settings atomically via tmp+rename, and rename over a single-file bind
+mount fails, breaking panel saves). Every change made in the in-app settings panel is
+written to the host file and persists across image rebuilds and container recreation.
+Avoid passing these settings with `docker -e` if you want the panel to control them —
+launch-environment variables take precedence over the settings file, so a `-e` value
+would silently override panel edits.
 
 ### YouTube tab
 

@@ -2,22 +2,30 @@
 # YTNoteGenerator Docker runner (template). Run from the repo directory.
 #
 # Settings persistence: the app writes settings-panel changes to the settings file
-# ($ENV_FILE), which is bind-mounted read-write over /app/.env inside the container.
-# Because the file lives on the HOST, every setting you change in the panel survives
-# image rebuilds and container recreation ("installs") — just like the note-directory
-# mounts. On first run the file is initialized from .env.example; edit it before
-# starting the app (API keys, model, and the OBSIDIAN_* dirs pointing at /data/*).
+# ($SETTINGS_DIR/.env), which lives on the HOST in a directory bind-mounted at
+# /app/config. Because the file is on the host, every setting you change in the
+# panel survives image rebuilds and container recreation ("installs") — just like
+# the note-directory mounts. On first run the file is initialized from
+# .env.example; edit it before starting the app (API keys, model, and the
+# OBSIDIAN_* dirs pointing at /data/*).
 #
-# Keep settings in $ENV_FILE. Do NOT pass them with -e: launch-environment variables
-# take precedence over the settings file, so a -e value would silently override any
-# panel edit to the same key.
+# Mount a DIRECTORY, not the single file: the app saves settings atomically via
+# tmp+rename, and rename over a single-file bind mount fails (EBUSY) — settings
+# saves would error inside the container. Renaming within a directory mount works.
+#
+# Keep settings in $SETTINGS_DIR/.env. Do NOT pass them with -e: launch-environment
+# variables take precedence over the settings file, so a -e value would silently
+# override any panel edit to the same key. (YTNG_ENV_FILE is passed with -e only
+# because it LOCATES the file — it is not a panel-managed setting.)
 
-# Where the app's settings live on the HOST (gitignored when kept as the repo .env).
-# Move it anywhere durable, e.g. ENV_FILE=/etc/ytnotegenerator.env
+# Where the app's settings live on the HOST. Defaults to a `config` dir inside the
+# repo (excluded from git and from docker image builds); move it anywhere durable,
+# e.g. SETTINGS_DIR=/etc/ytnotegenerator
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ENV_FILE="${YTNG_ENV_FILE:-$SCRIPT_DIR/.env}"
+SETTINGS_DIR="${YTNG_SETTINGS_DIR:-$SCRIPT_DIR/config}"
 
-[ -f "$ENV_FILE" ] || cp "$SCRIPT_DIR/.env.example" "$ENV_FILE"
+mkdir -p "$SETTINGS_DIR"
+[ -f "$SETTINGS_DIR/.env" ] || cp "$SCRIPT_DIR/.env.example" "$SETTINGS_DIR/.env"
 
 docker run -d \
     -p 5173:5173 \
@@ -25,6 +33,7 @@ docker run -d \
     -v /path/to/notes:/data/notes \
     -v /path/to/dictionary:/data/dictionary \
     -v /path/to/business:/data/business \
-    -v "$ENV_FILE":/app/.env \
+    -v "$SETTINGS_DIR":/app/config \
+    -e YTNG_ENV_FILE=/app/config/.env \
     -v /etc/localtime:/etc/localtime:ro \
     ytnotegenerator
