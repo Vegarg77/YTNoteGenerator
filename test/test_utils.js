@@ -2,6 +2,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 
 // ---- lib/utils.js ----
 
@@ -318,29 +319,100 @@ describe("getConfig", () => {
   });
 });
 
-describe("writeEnvFile", () => {
-  it("writes atomically via temp file", () => {
-    const testEnv = path.join(__dirname, "..", ".env.test");
-    // Use a fake env path for testing
-    const originalEnvPath = cfg.ENV_PATH;
-    // We can't easily mock module-level constants, so test the function behavior
-    // by writing to a separate path and checking it works
-    const testSettings = { TEST_KEY: "test_value" };
-    // Write to a temp location to verify atomicity doesn't leave .tmp files
-    const tmpCheckPath = testEnv + ".tmp";
-    if (fs.existsSync(testEnv)) fs.unlinkSync(testEnv);
-    if (fs.existsSync(tmpCheckPath)) fs.unlinkSync(tmpCheckPath);
+// Snapshot + restore helpers so settings-file tests never leak env state into the
+// rest of the suite (which asserts on defaults after deleting keys).
+function snapshotEnv(keys) {
+  return keys.map((key) => ({ key, had: Object.prototype.hasOwnProperty.call(process.env, key), value: process.env[key] }));
+}
+function restoreEnv(snapshot) {
+  for (const { key, had, value } of snapshot) {
+    if (had) process.env[key] = value;
+    else delete process.env[key];
+  }
+}
 
-    // Create test env file
-    fs.writeFileSync(testEnv, "EXISTING=old\n", "utf8");
-    // We can't directly call writeEnvFile with different path since ENV_PATH is module-scoped.
-    // Instead, verify the function exists and was imported correctly.
-    assert.strictEqual(typeof cfg.writeEnvFile, "function");
-    assert.strictEqual(typeof cfg.loadDotenv, "function");
-    assert.strictEqual(typeof cfg.reloadEnv, "function");
+describe("settings file handling", () => {
+  const TOUCHED = ["YTNG_ENV_FILE", "OPENAI_MODEL", "TAG_EXCLUDE", "OPENAI_API_KEY", "ADD"];
 
-    // Cleanup
-    if (fs.existsSync(testEnv)) fs.unlinkSync(testEnv);
+  function makeTempEnvFile(contents) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ytng-env-"));
+    const envFile = path.join(dir, ".env");
+    if (contents !== undefined) fs.writeFileSync(envFile, contents, "utf8");
+    return { dir, envFile };
+  }
+
+  function cleanup({ dir }) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+
+  it("loadDotenv fills gaps but never overrides launch env; reloadEnv preserves launch env", () => {
+    const saved = snapshotEnv(TOUCHED);
+    const { dir, envFile } = makeTempEnvFile("OPENAI_MODEL=from-file\nTAG_EXCLUDE=alpha\n");
+    try {
+      process.env.YTNG_ENV_FILE = envFile;
+      process.env.OPENAI_MODEL = "from-launch"; // launch env wins over the file
+      cfg.loadDotenv();
+      assert.strictEqual(process.env.OPENAI_MODEL, "from-launch");
+      assert.strictEqual(process.env.TAG_EXCLUDE, "alpha");
+      // reloadEnv must NOT clobber the launch value with the file's value
+      cfg.reloadEnv();
+      assert.strictEqual(process.env.OPENAI_MODEL, "from-launch");
+      assert.strictEqual(process.env.TAG_EXCLUDE, "alpha");
+    } finally {
+      delete process.env.YTNG_ENV_FILE;
+      restoreEnv(saved);
+      cleanup({ dir });
+    }
+  });
+
+  it("reloadEnv reflects external edits to (and removal from) the settings file", () => {
+    const saved = snapshotEnv(TOUCHED);
+    const { dir, envFile } = makeTempEnvFile("OPENAI_MODEL=one\n");
+    try {
+      process.env.YTNG_ENV_FILE = envFile;
+      cfg.loadDotenv();
+      assert.strictEqual(process.env.OPENAI_MODEL, "one");
+      fs.writeFileSync(envFile, "OPENAI_MODEL=two\n", "utf8");
+      cfg.reloadEnv();
+      assert.strictEqual(process.env.OPENAI_MODEL, "two");
+      fs.writeFileSync(envFile, "# cleared externally\n", "utf8");
+      cfg.reloadEnv();
+      assert.strictEqual(process.env.OPENAI_MODEL, undefined);
+      assert.strictEqual(cfg.getConfig().OPENAI_MODEL, "deepseek/deepseek-v4-flash-0731");
+    } finally {
+      delete process.env.YTNG_ENV_FILE;
+      restoreEnv(saved);
+      cleanup({ dir });
+    }
+  });
+
+  it("writeEnvFile round-trips through the active settings file atomically", () => {
+    const saved = snapshotEnv(TOUCHED);
+    const { dir, envFile } = makeTempEnvFile("KEEP=1\n# a comment\nOPENAI_MODEL=old\n");
+    try {
+      process.env.YTNG_ENV_FILE = envFile;
+      cfg.writeEnvFile({ OPENAI_MODEL: "new", ADD: "v", EMPTY: "" });
+      const raw = fs.readFileSync(envFile, "utf8");
+      assert.match(raw, /KEEP=1/);
+      assert.match(raw, /# a comment/);
+      assert.match(raw, /OPENAI_MODEL=new/);
+      assert.match(raw, /ADD=v/);
+      assert.doesNotMatch(raw, /EMPTY/); // empty new keys are dropped (defaults apply)
+      assert.ok(!fs.existsSync(envFile + ".tmp"), "no leftover temp file");
+      cfg.reloadEnv();
+      assert.strictEqual(process.env.OPENAI_MODEL, "new");
+      assert.strictEqual(process.env.ADD, "v");
+    } finally {
+      delete process.env.YTNG_ENV_FILE;
+      restoreEnv(saved);
+      cleanup({ dir });
+    }
+  });
+
+  it("exposes the legacy ENV_PATH default alongside the active path", () => {
+    assert.strictEqual(typeof cfg.ENV_PATH, "string");
+    assert.ok(cfg.ENV_PATH.endsWith(".env"));
+    assert.strictEqual(cfg.getEnvPath(), process.env.YTNG_ENV_FILE || cfg.ENV_PATH);
   });
 });
 

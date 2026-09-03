@@ -32,6 +32,10 @@ For each video, the app:
 
 - **Dictionary notes**: Search Wikipedia terms with autocomplete, then generate Obsidian dictionary entries with YAML frontmatter.
 - **Business notes**: Extract business/organization info (founders, headquarters, offerings) from Wikipedia into structured notes.
+- Both note types are tagged like video notes: the app LLM-selects topic tags from your
+  existing vault tag pool (scanned server-side; the settings exclude list is respected).
+  Unlike video notes there is no mandatory `#VN` tag — a note gets tags only when pool
+  tags genuinely match, and a tagging failure never blocks saving.
 
 ---
 
@@ -99,8 +103,15 @@ Optional overrides supported by the server:
 - `OBSIDIAN_NOTE_DIR` — directory for saved video notes
 - `OBSIDIAN_DICTIONARY_DIR` — directory for saved dictionary notes
 - `OBSIDIAN_BUSINESS_DIR` — directory for saved business notes
+- `YTNG_ENV_FILE` — path of the settings file the app reads/writes (default `<repo>/.env`).
+  The in-app settings panel persists changes to this file. Point it outside the repo, or
+  bind-mount a host file at the container path, to keep settings across reinstalls (see
+  Docker below). Launch-environment variables (shell export, `docker -e`, systemd) always
+  take precedence over values in this file.
 
-Most of these can also be changed at runtime through the in-app settings panel.
+Most of these can also be changed at runtime through the in-app settings panel; a save
+writes the panel values to the settings file (`YTNG_ENV_FILE`), which survives app updates
+(`.env` is gitignored) and, in Docker, container recreation when the file is mounted.
 
 ### 2) (Important) Adjust note-save locations
 
@@ -128,7 +139,7 @@ Build the image:
 docker build -t ytnotegenerator .
 ```
 
-Run the container:
+Run the container (a ready-to-edit version is in `docker-run.sh`):
 
 ```bash
 docker run -d \
@@ -137,20 +148,22 @@ docker run -d \
     -v /path/to/notes:/data/notes \
     -v /path/to/dictionary:/data/dictionary \
     -v /path/to/business:/data/business \
+    -v /path/to/ytnotegenerator.env:/app/.env \
     -v /etc/localtime:/etc/localtime:ro \
-    -e OPENAI_API_KEY=your-api-key \
-    -e OPENAI_MODEL=deepseek/deepseek-v4-flash-0731 \
-    -e OPENAI_BASE_URL=https://openrouter.ai/api \
-    -e BRIGHT_DATA_API_TOKEN=your-bright-data-token \
-    -e BRIGHT_DATA_YT_DATASET_ID=your-dataset-id \
-    -e BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49 \
-    -e OBSIDIAN_NOTE_DIR=/data/notes \
-    -e OBSIDIAN_DICTIONARY_DIR=/data/dictionary \
-    -e OBSIDIAN_BUSINESS_DIR=/data/business \
     ytnotegenerator
 ```
 
-Replace the `/path/to/...` volume mounts with directories on your host where you want notes saved. A ready-to-edit version of this command is available in `docker-run.sh`.
+Replace the `/path/to/...` volume mounts with directories on your host where you want
+notes saved. Create `/path/to/ytnotegenerator.env` from `.env.example` and put your API
+keys, model, and `OBSIDIAN_NOTE_DIR=/data/notes`,
+`OBSIDIAN_DICTIONARY_DIR=/data/dictionary`, `OBSIDIAN_BUSINESS_DIR=/data/business` in it
+(the `/data/*` paths match the mounts above).
+
+**Settings survive reinstalls.** The container's settings file is a bind-mount of the host
+file, so every change made in the in-app settings panel is written to the host file and
+persists across image rebuilds and container recreation. Avoid passing these settings with
+`docker -e` if you want the panel to control them — launch-environment variables take
+precedence over the settings file, so a `-e` value would silently override panel edits.
 
 ### YouTube tab
 
@@ -202,11 +215,13 @@ Request JSON:
 
 ### `GET /api/settings`
 
-- Returns current application configuration.
+- Reloads the settings file (`YTNG_ENV_FILE`, default `<repo>/.env`) and returns current application configuration.
 
 ### `POST /api/settings`
 
-- Updates application settings and persists them to `.env`.
+- Updates application settings and persists them to the settings file.
+- Launch-environment variables (shell export, `docker -e`) take precedence over file
+  values, so a key pinned that way keeps its pinned value after a save.
 
 ---
 
