@@ -56,7 +56,16 @@ function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, f
   ].join("\n");
 }
 
-function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location }) {
+// Format tags for a note footer: strip stray '#'/empties, '#'-prefix each.
+// Returns "" when there are no tags (callers then omit the line entirely).
+function formatTagLine(tags) {
+  const names = (Array.isArray(tags) ? tags : [])
+    .map((t) => String(t).trim().replace(/^#/, ""))
+    .filter(Boolean);
+  return names.length ? names.map((t) => `#${t}`).join(" ") : "";
+}
+
+function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location, tags }) {
   const body = (structuredContent || "").trim();
   const frontmatterLines = ["---", "aliases: []"];
   if (location) {
@@ -64,7 +73,7 @@ function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location 
   }
   frontmatterLines.push("---");
 
-  return [
+  const lines = [
     ...frontmatterLines,
     "",
     `#### ${date}`,
@@ -75,10 +84,13 @@ function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location 
     "",
     "## References",
     sourceUrl ? `- ${sourceUrl}` : "- https://en.wikipedia.org/"
-  ].join("\n");
+  ];
+  const tagLine = formatTagLine(tags);
+  if (tagLine) lines.push("", tagLine);
+  return lines.join("\n");
 }
 
-function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl, location }) {
+function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl, location, tags }) {
   const cleanOfferings = Array.isArray(offerings) ? offerings.filter(Boolean) : [];
   const offeringsLines = cleanOfferings.length ? cleanOfferings.map((item) => `- ${item}`) : ["- N/A"];
 
@@ -87,9 +99,7 @@ function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headqu
     lines.push("---", `location: ${location.lat}, ${location.lon}`, "---", "");
   }
   lines.push(`#### ${date}  ${time}`);
-
-  return [
-    ...lines,
+  lines.push(
     "",
     `## Founded by: ${foundedBy || "N/A"}`,
     "",
@@ -107,7 +117,10 @@ function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headqu
     "",
     "## References",
     sourceUrl ? `- ${sourceUrl}` : "- https://en.wikipedia.org/"
-  ].join("\n");
+  );
+  const tagLine = formatTagLine(tags);
+  if (tagLine) lines.push("", tagLine);
+  return lines.join("\n");
 }
 
 
@@ -518,21 +531,40 @@ function validateTagSelection(rawText, pool) {
   return out;
 }
 
+// Note-kind labels for the tag picker. Video keeps its original wording; the Wikipedia
+// flows describe the note without a channel. Dictionary/business notes carry no
+// mandatory #VN prefix — tags come purely from the pool.
+const TAG_KIND_PROMPTS = {
+  video: {
+    label: "video note",
+    header: (title, channel) => `Video Title: ${title || ""}\nChannel: ${channel || ""}`
+  },
+  dictionary: {
+    label: "dictionary note (a Wikipedia term)",
+    header: (title) => `Term: ${title || ""}`
+  },
+  business: {
+    label: "business note (a Wikipedia organization)",
+    header: (title) => `Organization: ${title || ""}`
+  }
+};
+
 // Pick applicable tags for a note from the fixed pool. Empty array is a valid,
 // expected outcome (no forced matches). Any failure degrades to no tags.
-async function selectNoteTags({ apiKey, model, title, channel, summary, pool, signal }) {
+async function selectNoteTags({ apiKey, model, title, channel, summary, pool, signal, kind = "video" }) {
   if (!pool || pool.length === 0) return [];
+  const prompt = TAG_KIND_PROMPTS[kind] || TAG_KIND_PROMPTS.video;
   const messages = [
     { role: "system", content: "You label notes with tags chosen STRICTLY from a fixed list. Never invent tags." },
     {
       role: "user",
       content:
         `Here is the complete list of allowed tags:\n${pool.join(", ")}\n\n` +
-        `Select every tag from that list that genuinely applies to the video note below. ` +
+        `Select every tag from that list that genuinely applies to the ${prompt.label} below. ` +
         `Only include a tag if the note's content is substantially about that topic. ` +
         `If none apply, return an empty array. ` +
         `Respond with ONLY a JSON array of tag names (no # prefix), nothing else.\n\n` +
-        `Video Title: ${title || ""}\nChannel: ${channel || ""}\n\nSUMMARY:\n${(summary || "").slice(0, 12000)}`
+        `${prompt.header(title, channel)}\n\nSUMMARY:\n${(summary || "").slice(0, 12000)}`
     }
   ];
   const reply = await openaiText({ apiKey, model, messages, temperature: 0, signal });
@@ -783,12 +815,32 @@ ${extract.slice(0, 180000)}`
     stopHeartbeat(hb);
   }
 
+  const dictContent = normalizeDictionaryContent(structuredContent);
+
+  // Tag selection from the vault pool — same as video notes EXCEPT dictionary/business
+  // notes carry no mandatory #VN prefix: tags come purely from the pool (which already
+  // respects the settings exclude list). Failures degrade to no tags, never block save.
+  let noteTags = [];
+  panel.setProgress("Selecting tags…", 85);
+  try {
+    const pool = await getTagPool();
+    noteTags = await withTimeout(
+      (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: dictContent, pool, signal, kind: "dictionary" }),
+      120000,
+      "OpenAI (tags)"
+    );
+    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+  } catch (tagErr) {
+    panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
+  }
+
   const { date } = nowDateTimeStrings();
   const markdown = buildDictionaryMarkdown({
     date,
-    structuredContent: normalizeDictionaryContent(structuredContent),
+    structuredContent: dictContent,
     sourceUrl: articleUrl,
-    location: wikiData?.location || null
+    location: wikiData?.location || null,
+    tags: noteTags
   });
 
   panel.setProgress("Saving note file…", 92);
@@ -876,6 +928,23 @@ ${extract.slice(0, 180000)}`
   }
 
   const parsed = parseBusinessContent(structuredContent);
+
+  // Tag selection from the vault pool — same as dictionary notes above: no mandatory
+  // #VN prefix, pool only (exclude list respected), failures degrade to no tags.
+  let noteTags = [];
+  panel.setProgress("Selecting tags…", 85);
+  try {
+    const pool = await getTagPool();
+    noteTags = await withTimeout(
+      (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: parsed.summary, pool, signal, kind: "business" }),
+      120000,
+      "OpenAI (tags)"
+    );
+    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+  } catch (tagErr) {
+    panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
+  }
+
   const { date, time } = nowDateTimeStrings();
   const markdown = buildBusinessMarkdown({
     date,
@@ -887,7 +956,8 @@ ${extract.slice(0, 180000)}`
     summary: parsed.summary,
     offerings: parsed.offerings,
     sourceUrl: articleUrl,
-    location: wikiData?.location || null
+    location: wikiData?.location || null,
+    tags: noteTags
   });
 
   panel.setProgress("Saving note file…", 92);
@@ -1246,6 +1316,10 @@ async function runWikipedia() {
     inputErr.textContent = "Please add at least one Wikipedia term or business/organization.";
     return;
   }
+
+  // warm the vault tag pool NOW (mirrors the video flow) so per-note tag selection
+  // never waits on the scan; errors are swallowed — the per-note step reports them.
+  getTagPool().catch(() => {});
 
   if (allPanelsSettled()) progressContainer.innerHTML = "";
 
