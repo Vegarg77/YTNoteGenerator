@@ -507,6 +507,15 @@ function isOpenAIBase(baseUrl) {
 function isOpenRouterBase(baseUrl) {
   return /(^|\.)openrouter\.ai$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
 }
+function isDeepSeekBase(baseUrl) {
+  return /(^|\.)deepseek\.com$/i.test((() => { try { return new URL(baseUrl).hostname; } catch { return ""; } })());
+}
+// DeepSeek's v4 models enable thinking mode by default at HIGH effort, which burns
+// long reasoning phases (and billed reasoning tokens) before every answer — on
+// cleaning/summarization re-emission tasks that means minutes of dead time per chunk.
+// This app never needs that reasoning, so disable it on the DeepSeek-direct endpoint.
+// OpenRouter/OpenAI would reject the unknown `thinking` param, hence the base gate.
+const DEEPSEEK_THINKING_DISABLED = { thinking: { type: "disabled" } };
 // Same provider policy as this project's Hermes agent config and CI code-review
 // workflow: pin every OpenRouter call to the Reka backend (order:["reka"]) so the
 // prompt cache actually builds and hits across all traffic sources, carrying the deep
@@ -596,7 +605,8 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
       model,
       temperature,
       messages,
-      ...(isOpenRouterBase(baseUrl) ? { provider: OPENROUTER_PROVIDER_ROUTING } : {})
+      ...(isOpenRouterBase(baseUrl) ? { provider: OPENROUTER_PROVIDER_ROUTING } : {}),
+      ...(isDeepSeekBase(baseUrl) ? DEEPSEEK_THINKING_DISABLED : {})
     }
   });
 }
