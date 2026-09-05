@@ -628,10 +628,10 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const hb = startHeartbeat(panel, "Cleaning transcript…", fetchDonePct);
     try {
       try {
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean)");
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean)");
       } catch {
         panel.setProgress("Retrying clean…", pctAt(1.5));
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 120000, "OpenAI (clean retry)");
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean retry)");
       }
     } finally {
       stopHeartbeat(hb);
@@ -655,13 +655,13 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
       ];
       let cleaned;
       try {
-        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 120000, `OpenAI (clean chunk ${i + 1})`);
+        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 300000, `LLM (clean chunk ${i + 1})`);
       } catch {
         panel.setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, pctAt(1 + i + 0.5));
         cleaned = await withTimeout(
           (signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }),
-          120000,
-          `OpenAI (clean chunk ${i + 1} retry)`
+          300000,
+          `LLM (clean chunk ${i + 1} retry)`
         );
       }
       out.push((cleaned || "").trim());
@@ -685,10 +685,10 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const hb = startHeartbeat(panel, "Summarizing…", summarizeStartPct);
     try {
       try {
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary)");
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary)");
       } catch {
         panel.setProgress("Retrying summary…", pctAt(1 + numChunks + 0.5));
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 120000, "OpenAI (summary retry)");
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary retry)");
       }
     } finally {
       stopHeartbeat(hb);
@@ -704,8 +704,8 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const pool = await getTagPool();
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: meta.title, channel: meta.channel, summary, pool, signal }),
-      120000,
-      "OpenAI (tags)"
+      300000,
+      "LLM (tags)"
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
@@ -806,10 +806,10 @@ ${extract.slice(0, 180000)}`
   let structuredContent = "";
   try {
     try {
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary)");
     } catch {
       panel.setProgress("Retrying summary…", 70);
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia summary retry)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary retry)");
     }
   } finally {
     stopHeartbeat(hb);
@@ -826,8 +826,8 @@ ${extract.slice(0, 180000)}`
     const pool = await getTagPool();
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: dictContent, pool, signal, kind: "dictionary" }),
-      120000,
-      "OpenAI (tags)"
+      300000,
+      "LLM (tags)"
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
@@ -918,10 +918,10 @@ ${extract.slice(0, 180000)}`
   let structuredContent = "";
   try {
     try {
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary)");
     } catch {
       panel.setProgress("Retrying summary…", 70);
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 120000, "OpenAI (wikipedia business summary retry)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary retry)");
     }
   } finally {
     stopHeartbeat(hb);
@@ -937,8 +937,8 @@ ${extract.slice(0, 180000)}`
     const pool = await getTagPool();
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: parsed.summary, pool, signal, kind: "business" }),
-      120000,
-      "OpenAI (tags)"
+      300000,
+      "LLM (tags)"
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
