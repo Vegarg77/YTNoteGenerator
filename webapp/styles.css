@@ -582,3 +582,70 @@ textarea::placeholder { color: #64748b; }
   min-height: 18px;
   margin-top: 4px;
 }
+
+/* ---- app version next to the settings cog ---- */
+.app-version {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* ---- job cards: cancel button + elapsed timer ---- */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cancel-btn {
+  background: transparent;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #f87171;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s ease, filter 0.15s ease;
+}
+
+.cancel-btn:hover {
+  background: rgba(248, 113, 113, 0.15);
+  filter: brightness(1.15);
+}
+
+.cancel-btn:active {
+  transform: translateY(1px);
+}
+
+.cancel-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-btn[hidden] {
+  display: none;
+}
+
+.badge.cancelled {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(120, 53, 15, 0.35);
+}
+
+.job-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.elapsed {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
