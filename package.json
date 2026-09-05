@@ -1,6 +1,6 @@
 {
   "name": "ytnotegenerator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate Obsidian-ready notes from YouTube videos and Wikipedia articles by combining transcript/article extraction + OpenAI cleanup/summarization.",
   "main": "server.js",
   "scripts": {

@@ -8,6 +8,7 @@ const utils = require("./lib/utils");
 const brightdata = require("./lib/brightdata");
 const wiki = require("./lib/wiki");
 const tags = require("./lib/tags");
+const { version: APP_VERSION } = require("./package.json");
 
 cfg.loadDotenv();
 
@@ -246,6 +247,7 @@ const server = http.createServer(async (req, res) => {
       cfg.reloadEnv();
       const appCfg = cfg.getConfig();
       sendJson(res, 200, {
+        version: APP_VERSION,
         OBSIDIAN_NOTE_DIR: appCfg.OBSIDIAN_NOTE_DIR,
         OBSIDIAN_DICTIONARY_DIR: appCfg.OBSIDIAN_DICTIONARY_DIR,
         OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,

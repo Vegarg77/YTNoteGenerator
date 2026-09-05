@@ -209,15 +209,78 @@ function splitIntoChunks(text, maxLen = 12000) {
   return chunks;
 }
 
-function withTimeout(promiseFactory, ms, label = "operation") {
+function cancelledError() {
+  const err = new Error("Cancelled by user");
+  err.name = "CancelledError";
+  return err;
+}
+
+function throwIfCancelled(signal) {
+  if (signal?.aborted) throw cancelledError();
+}
+
+function withTimeout(promiseFactory, ms, label = "operation", externalSignal = null) {
   const ctrl = new AbortController();
+  const onExternalAbort = () => ctrl.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) return Promise.reject(cancelledError());
+    externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
   const t = setTimeout(() => ctrl.abort(), ms);
   return promiseFactory(ctrl.signal)
-    .finally(() => clearTimeout(t))
+    .finally(() => {
+      clearTimeout(t);
+      if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+    })
     .catch((err) => {
-      if (err?.name === "AbortError") throw new Error(`${label} timed out after ${ms}ms`);
+      if (err?.name === "AbortError") {
+        if (externalSignal?.aborted) throw cancelledError();
+        throw new Error(`${label} timed out after ${ms}ms`);
+      }
       throw err;
     });
+}
+
+// ---- per-job elapsed timers: ONE shared 1s ticker drives every active job card ----
+const elapsedRegistry = new Set();
+let elapsedTimer = null;
+
+function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m ${s}s`;
+}
+
+function ensureElapsedTicker() {
+  if (elapsedTimer) return;
+  elapsedTimer = setInterval(() => {
+    for (const entry of elapsedRegistry) {
+      entry.el.textContent = formatElapsed(Date.now() - entry.startedAt);
+    }
+    if (!elapsedRegistry.size) {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
+  }, 1000);
+}
+
+function startElapsed(entry) {
+  if (elapsedRegistry.has(entry)) return;
+  elapsedRegistry.add(entry);
+  entry.el.textContent = formatElapsed(Date.now() - entry.startedAt);
+  ensureElapsedTicker();
+}
+
+function stopElapsed(entry) {
+  if (!elapsedRegistry.delete(entry)) return;
+  if (!elapsedRegistry.size && elapsedTimer) {
+    clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
 }
 
 function createProgressPanel(itemLabel, index) {
@@ -226,7 +289,10 @@ function createProgressPanel(itemLabel, index) {
   card.innerHTML = `
     <div class="panel-header">
       <h3 class="panel-title">Item ${index + 1}</h3>
-      <span class="badge soft">Queued</span>
+      <div class="header-actions">
+        <span class="badge soft">Queued</span>
+        <button type="button" class="cancel-btn" aria-label="Cancel job" title="Cancel job">✕</button>
+      </div>
     </div>
     <div class="stepper">
       <div class="step"></div>
@@ -241,6 +307,7 @@ function createProgressPanel(itemLabel, index) {
       <div class="progress-fill"></div>
     </div>
     <div class="log" aria-live="polite"></div>
+    <div class="job-footer"><span class="elapsed muted"></span></div>
   `;
 
   const itemLabelEl = document.createElement("p");
@@ -259,6 +326,18 @@ function createProgressPanel(itemLabel, index) {
   const pfill = card.querySelector(".progress-fill");
   const steps = Array.from(card.querySelectorAll(".step"));
   const log = card.querySelector(".log");
+  const cancelEl = card.querySelector(".cancel-btn");
+  const elapsedEl = card.querySelector(".elapsed");
+
+  let terminal = false;
+  let elapsedEntry = null;
+  let cancelHandler = null;
+
+  cancelEl.addEventListener("click", () => {
+    if (terminal) return;
+    cancelEl.disabled = true;
+    if (cancelHandler) cancelHandler();
+  });
 
   const api = {
     setTitle(title) {
@@ -273,6 +352,19 @@ function createProgressPanel(itemLabel, index) {
       pct.textContent = `${pctNum}%`;
       pfill.style.width = `${pctNum}%`;
       badge.textContent = pctNum >= 100 ? "Done" : "Running";
+      if (pctNum >= 100) {
+        // terminal state: stop the elapsed clock and drop the cancel affordance
+        terminal = true;
+        cancelEl.hidden = true;
+        cancelEl.disabled = false;
+        if (elapsedEntry) {
+          stopElapsed(elapsedEntry);
+          elapsedEntry = null;
+        }
+      } else if (!terminal && !elapsedEntry) {
+        elapsedEntry = { el: elapsedEl, startedAt: Date.now() };
+        startElapsed(elapsedEntry);
+      }
       if (note) api.appendLog(`${stage}: ${note}`);
       if (pctNum >= 25) steps[0].classList.add("fill");
       if (pctNum >= 55) steps[1].classList.add("fill");
@@ -285,9 +377,34 @@ function createProgressPanel(itemLabel, index) {
       log.scrollTop = log.scrollHeight;
     },
     setError(message) {
+      terminal = true;
+      cancelEl.hidden = true;
+      cancelEl.disabled = false;
+      if (elapsedEntry) {
+        stopElapsed(elapsedEntry);
+        elapsedEntry = null;
+      }
       badge.textContent = "Error";
       badge.classList.add("danger");
       api.setProgress("Error", 100, message || "Failed");
+    },
+    setCancelled() {
+      terminal = true;
+      cancelEl.hidden = true;
+      cancelEl.disabled = false;
+      if (elapsedEntry) {
+        stopElapsed(elapsedEntry);
+        elapsedEntry = null;
+      }
+      badge.textContent = "Cancelled";
+      badge.classList.remove("danger");
+      badge.classList.add("cancelled");
+      status.textContent = "Cancelled";
+      api.appendLog("Cancelled by user.");
+    },
+    // wire the red ✕ to this job's AbortController
+    onCancel(fn) {
+      cancelHandler = fn;
     }
   };
 
@@ -312,9 +429,15 @@ function parseVideoUrls(rawInput) {
   ));
 }
 
-async function fetchTranscriptFromServer(videoUrl) {
+async function fetchTranscriptFromServer(videoUrl, signal) {
   const url = `/api/transcript?url=${encodeURIComponent(videoUrl)}`;
-  const resp = await fetch(url);
+  let resp;
+  try {
+    resp = await fetch(url, { signal });
+  } catch (err) {
+    if (signal?.aborted) throw cancelledError();
+    throw err;
+  }
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Transcript API error: ${resp.status} ${text}`);
@@ -339,11 +462,17 @@ async function fetchWikipediaSuggestions(query) {
   return Array.isArray(data?.suggestions) ? data.suggestions : [];
 }
 
-async function fetchWikipediaPage(title, articleUrl) {
+async function fetchWikipediaPage(title, articleUrl, signal) {
   const params = new URLSearchParams();
   if (title) params.set("title", title);
   if (articleUrl) params.set("url", articleUrl);
-  const resp = await fetch(`/api/wikipedia-page?${params.toString()}`);
+  let resp;
+  try {
+    resp = await fetch(`/api/wikipedia-page?${params.toString()}`, { signal });
+  } catch (err) {
+    if (signal?.aborted) throw cancelledError();
+    throw err;
+  }
   if (!resp.ok) {
     const text = await resp.text();
     throw new Error(`Wikipedia API error: ${resp.status} ${text}`);
@@ -583,9 +712,10 @@ function stopHeartbeat(timer) {
   if (timer) clearInterval(timer);
 }
 
-async function processVideo({ apiKey, model, videoUrl, panel }) {
+async function processVideo({ apiKey, model, videoUrl, panel, signal }) {
   panel.setProgress("Fetching metadata + transcript", 5);
-  const transcriptResult = await fetchTranscriptFromServer(videoUrl);
+  const transcriptResult = await fetchTranscriptFromServer(videoUrl, signal);
+  throwIfCancelled(signal);
   const transcript = transcriptResult.transcript;
   const meta = transcriptResult.metadata;
 
@@ -628,10 +758,11 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const hb = startHeartbeat(panel, "Cleaning transcript…", fetchDonePct);
     try {
       try {
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean)");
-      } catch {
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean)", signal);
+      } catch (err) {
+        if (err?.name === "CancelledError") throw err;
         panel.setProgress("Retrying clean…", pctAt(1.5));
-        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean retry)");
+        fixedTranscript = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanMessages, temperature: 0.1, signal }), 300000, "LLM (clean retry)", signal);
       }
     } finally {
       stopHeartbeat(hb);
@@ -655,13 +786,15 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
       ];
       let cleaned;
       try {
-        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 300000, `LLM (clean chunk ${i + 1})`);
-      } catch {
+        cleaned = await withTimeout((signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }), 300000, `LLM (clean chunk ${i + 1})`, signal);
+      } catch (err) {
+        if (err?.name === "CancelledError") throw err;
         panel.setProgress(`Retrying chunk ${i + 1}/${chunks.length}`, pctAt(1 + i + 0.5));
         cleaned = await withTimeout(
           (signal) => openaiText({ apiKey, model, messages: cleanChunkMessages, temperature: 0.1, signal }),
           300000,
-          `LLM (clean chunk ${i + 1} retry)`
+          `LLM (clean chunk ${i + 1} retry)`,
+          signal
         );
       }
       out.push((cleaned || "").trim());
@@ -685,10 +818,11 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     const hb = startHeartbeat(panel, "Summarizing…", summarizeStartPct);
     try {
       try {
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary)");
-      } catch {
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary)", signal);
+      } catch (err) {
+        if (err?.name === "CancelledError") throw err;
         panel.setProgress("Retrying summary…", pctAt(1 + numChunks + 0.5));
-        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary retry)");
+        summary = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.2, signal }), 300000, "LLM (summary retry)", signal);
       }
     } finally {
       stopHeartbeat(hb);
@@ -705,10 +839,12 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: meta.title, channel: meta.channel, summary, pool, signal }),
       300000,
-      "LLM (tags)"
+      "LLM (tags)",
+      signal
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
+    if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
   }
 
@@ -724,6 +860,7 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
     tags: noteTags
   });
 
+  throwIfCancelled(signal);
   panel.setProgress("Saving note file…", savePct);
   let saveResult = null;
   try {
@@ -748,16 +885,17 @@ async function processVideo({ apiKey, model, videoUrl, panel }) {
   return { markdown, sourceUrl: meta.url || videoUrl, saveResult, title: meta.title };
 }
 
-async function processWikipediaTerm({ apiKey, model, entry, panel }) {
+async function processWikipediaTerm({ apiKey, model, entry, panel, signal }) {
   const term = entry.title;
   panel.setProgress("Loading Wikipedia article", 15);
   const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
   let wikiData;
   try {
-    wikiData = await fetchWikipediaPage(term, entry.url);
+    wikiData = await fetchWikipediaPage(term, entry.url, signal);
   } finally {
     stopHeartbeat(fetchHb);
   }
+  throwIfCancelled(signal);
   const articleTitle = wikiData?.title || term;
   const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
   const extract = wikiData?.extract || "";
@@ -806,10 +944,11 @@ ${extract.slice(0, 180000)}`
   let structuredContent = "";
   try {
     try {
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary)");
-    } catch {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary)", signal);
+    } catch (err) {
+      if (err?.name === "CancelledError") throw err;
       panel.setProgress("Retrying summary…", 70);
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary retry)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia summary retry)", signal);
     }
   } finally {
     stopHeartbeat(hb);
@@ -827,10 +966,12 @@ ${extract.slice(0, 180000)}`
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: dictContent, pool, signal, kind: "dictionary" }),
       300000,
-      "LLM (tags)"
+      "LLM (tags)",
+      signal
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
+    if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
   }
 
@@ -843,6 +984,7 @@ ${extract.slice(0, 180000)}`
     tags: noteTags
   });
 
+  throwIfCancelled(signal);
   panel.setProgress("Saving note file…", 92);
   let saveResult = null;
   try {
@@ -860,16 +1002,17 @@ ${extract.slice(0, 180000)}`
   return { markdown, sourceUrl: articleUrl, saveResult, title: articleTitle, itemType: "dictionary" };
 }
 
-async function processWikipediaBusiness({ apiKey, model, entry, panel }) {
+async function processWikipediaBusiness({ apiKey, model, entry, panel, signal }) {
   const term = entry.title;
   panel.setProgress("Loading Wikipedia article", 15);
   const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
   let wikiData;
   try {
-    wikiData = await fetchWikipediaPage(term, entry.url);
+    wikiData = await fetchWikipediaPage(term, entry.url, signal);
   } finally {
     stopHeartbeat(fetchHb);
   }
+  throwIfCancelled(signal);
   const articleTitle = wikiData?.title || term;
   const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
   const extract = wikiData?.extract || "";
@@ -918,10 +1061,11 @@ ${extract.slice(0, 180000)}`
   let structuredContent = "";
   try {
     try {
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary)");
-    } catch {
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary)", signal);
+    } catch (err) {
+      if (err?.name === "CancelledError") throw err;
       panel.setProgress("Retrying summary…", 70);
-      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary retry)");
+      structuredContent = await withTimeout((signal) => openaiText({ apiKey, model, messages: summaryMessages, temperature: 0.1, signal }), 300000, "LLM (wikipedia business summary retry)", signal);
     }
   } finally {
     stopHeartbeat(hb);
@@ -938,10 +1082,12 @@ ${extract.slice(0, 180000)}`
     noteTags = await withTimeout(
       (signal) => selectNoteTags({ apiKey, model, title: articleTitle, summary: parsed.summary, pool, signal, kind: "business" }),
       300000,
-      "LLM (tags)"
+      "LLM (tags)",
+      signal
     );
     panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
   } catch (tagErr) {
+    if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
   }
 
@@ -960,6 +1106,7 @@ ${extract.slice(0, 180000)}`
     tags: noteTags
   });
 
+  throwIfCancelled(signal);
   panel.setProgress("Saving note file…", 92);
   let saveResult = null;
   try {
@@ -1165,6 +1312,8 @@ async function loadSettings() {
 }
 
 function populateSettingsForm(data) {
+  const versionEl = el("appVersion");
+  if (versionEl && data.version) versionEl.textContent = `v${data.version}`;
   el("settingNotePath").value = data.OBSIDIAN_NOTE_DIR || "";
   el("settingDictPath").value = data.OBSIDIAN_DICTIONARY_DIR || "";
   el("settingBizPath").value = data.OBSIDIAN_BUSINESS_DIR || "";
@@ -1231,7 +1380,9 @@ function closeSettings() {
 function allPanelsSettled() {
   const badges = progressContainer.querySelectorAll(".badge");
   if (!badges.length) return true;
-  return Array.from(badges).every((b) => b.textContent === "Done" || b.textContent === "Error");
+  return Array.from(badges).every(
+    (b) => b.textContent === "Done" || b.textContent === "Error" || b.textContent === "Cancelled"
+  );
 }
 
 function updateActionButtons() {
@@ -1274,20 +1425,22 @@ async function runYoutube() {
   statusEl.textContent = `Running ${videoUrls.length} video${videoUrls.length === 1 ? "" : "s"}`;
 
   const offset = progressContainer.children.length;
-  const panels = videoUrls.map((videoUrl, index) => ({
-    videoUrl,
-    panel: createProgressPanel(videoUrl, offset + index)
-  }));
+  const panels = videoUrls.map((videoUrl, index) => {
+    const ctrl = new AbortController();
+    const panel = createProgressPanel(videoUrl, offset + index);
+    panel.onCancel(() => ctrl.abort());
+    return { videoUrl, panel, ctrl };
+  });
 
   const results = await Promise.allSettled(
-    panels.map(({ videoUrl, panel }) => processVideo({ apiKey, model, videoUrl, panel }))
+    panels.map(({ videoUrl, panel, ctrl }) => processVideo({ apiKey, model, videoUrl, panel, signal: ctrl.signal }))
   );
 
   results.forEach((entry, index) => {
     const url = panels[index].videoUrl;
-    if (entry.status === "rejected") {
+    if (entry.status === "rejected" && entry.reason?.name !== "CancelledError") {
       if (!failedVideoUrls.includes(url)) failedVideoUrls.push(url);
-    } else {
+    } else if (entry.status === "fulfilled") {
       const idx = failedVideoUrls.indexOf(url);
       if (idx >= 0) failedVideoUrls.splice(idx, 1);
     }
@@ -1338,17 +1491,20 @@ async function runWikipedia() {
   ];
 
   const offset = progressContainer.children.length;
-  const panels = workItems.map(({ entry }, index) => ({
-    entry,
-    panel: createProgressPanel(entry.title, offset + index)
-  }));
+  const panels = workItems.map(({ entry }, index) => {
+    const ctrl = new AbortController();
+    const panel = createProgressPanel(entry.title, offset + index);
+    panel.onCancel(() => ctrl.abort());
+    return { entry, panel, ctrl };
+  });
 
   const results = await Promise.allSettled(
     workItems.map(({ entry, itemType }, index) => {
       const panel = panels[index].panel;
+      const signal = panels[index].ctrl.signal;
       return itemType === "business"
-        ? processWikipediaBusiness({ apiKey, model, entry, panel })
-        : processWikipediaTerm({ apiKey, model, entry, panel });
+        ? processWikipediaBusiness({ apiKey, model, entry, panel, signal })
+        : processWikipediaTerm({ apiKey, model, entry, panel, signal });
     })
   );
 
@@ -1382,17 +1538,19 @@ async function retryFailed() {
   statusEl.textContent = `Retrying ${urlsToRetry.length} failed video${urlsToRetry.length === 1 ? "" : "s"}`;
 
   const offset = progressContainer.children.length;
-  const panels = urlsToRetry.map((videoUrl, index) => ({
-    videoUrl,
-    panel: createProgressPanel(videoUrl, offset + index)
-  }));
+  const panels = urlsToRetry.map((videoUrl, index) => {
+    const ctrl = new AbortController();
+    const panel = createProgressPanel(videoUrl, offset + index);
+    panel.onCancel(() => ctrl.abort());
+    return { videoUrl, panel, ctrl };
+  });
 
   const results = await Promise.allSettled(
-    panels.map(({ videoUrl, panel }) => processVideo({ apiKey, model, videoUrl, panel }))
+    panels.map(({ videoUrl, panel, ctrl }) => processVideo({ apiKey, model, videoUrl, panel, signal: ctrl.signal }))
   );
 
   results.forEach((entry, index) => {
-    if (entry.status === "rejected") {
+    if (entry.status === "rejected" && entry.reason?.name !== "CancelledError") {
       const url = panels[index].videoUrl;
       if (!failedVideoUrls.includes(url)) failedVideoUrls.push(url);
     }
@@ -1417,10 +1575,14 @@ function clearWikiFields() {
 function finalizeRunResults(results, panels, mode) {
   const successful = [];
   let failed = 0;
+  let cancelled = 0;
 
   results.forEach((entry, index) => {
     if (entry.status === "fulfilled") {
       successful.push(entry.value);
+    } else if (entry.reason?.name === "CancelledError") {
+      cancelled += 1;
+      panels[index].panel.setCancelled();
     } else {
       failed += 1;
       panels[index].panel.setError(entry.reason?.message || "Something went wrong.");
@@ -1428,6 +1590,10 @@ function finalizeRunResults(results, panels, mode) {
   });
 
   if (!successful.length) {
+    if (failed === 0 && cancelled > 0) {
+      statusEl.textContent = `Done (${cancelled} cancelled)`;
+      return;
+    }
     inputErr.textContent = "All items failed. Check the progress panels for details.";
     statusEl.textContent = "Done (with errors)";
     return;
@@ -1446,7 +1612,11 @@ function finalizeRunResults(results, panels, mode) {
   resultEl.value = resultEl.value ? resultEl.value + "\n\n---\n\n" + output : output;
   copyBtn.disabled = false;
   if (successful[0]?.sourceUrl) openSource.href = successful[0].sourceUrl;
-  statusEl.textContent = failed ? `Done (${successful.length} succeeded, ${failed} failed)` : `Done (${successful.length} succeeded)`;
+  const parts = [];
+  if (successful.length) parts.push(`${successful.length} succeeded`);
+  if (failed) parts.push(`${failed} failed`);
+  if (cancelled) parts.push(`${cancelled} cancelled`);
+  statusEl.textContent = `Done (${parts.join(", ")})`;
 
   const allSaved = successful.every((item) => item.saveResult);
   copyStatus.textContent = allSaved
