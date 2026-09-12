@@ -246,7 +246,7 @@ const server = http.createServer(async (req, res) => {
       // ?refresh=1 forces a check now (the indicator's click action); otherwise this is the
       // cached result from the last interval tick.
       if (url.searchParams.get("refresh") === "1") {
-        await gdriveMonitor.checkNow();
+        await gdriveMonitor.checkNowIfStale();
       }
       sendJson(res, 200, gdriveMonitor.getStatus());
     } catch (err) {

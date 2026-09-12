@@ -54,22 +54,33 @@ describe("checkGoogleDrive", () => {
   });
 
   it("reports running when the process listing contains a Drive process", async () => {
-    const execImpl = (cmd, opts, cb) => cb(null, RUNNING_CSV);
-    const result = await gdrive.checkGoogleDrive({ platform: "win32", execImpl });
+    const execFileImpl = (file, args, opts, cb) => cb(null, RUNNING_CSV);
+    const result = await gdrive.checkGoogleDrive({ platform: "win32", execFileImpl });
     assert.strictEqual(result.state, "running");
     assert.deepStrictEqual(result.matched, ["GoogleDriveFS.exe"]);
   });
 
+  it("spawns tasklist directly, without a shell", async () => {
+    let seen = null;
+    const execFileImpl = (file, args, opts, cb) => {
+      seen = { file, args };
+      cb(null, RUNNING_CSV);
+    };
+    await gdrive.checkGoogleDrive({ platform: "win32", execFileImpl });
+    assert.strictEqual(seen.file, "tasklist");
+    assert.deepStrictEqual(seen.args, ["/NH", "/FO", "CSV"]);
+  });
+
   it("reports stopped when the listing has no Drive process", async () => {
-    const execImpl = (cmd, opts, cb) => cb(null, NOT_RUNNING_CSV);
-    const result = await gdrive.checkGoogleDrive({ platform: "win32", execImpl });
+    const execFileImpl = (file, args, opts, cb) => cb(null, NOT_RUNNING_CSV);
+    const result = await gdrive.checkGoogleDrive({ platform: "win32", execFileImpl });
     assert.strictEqual(result.state, "stopped");
     assert.match(result.detail, /No Google Drive process/);
   });
 
   it("reports unknown, not stopped, when the listing command fails", async () => {
-    const execImpl = (cmd, opts, cb) => cb(new Error("tasklist is not recognized"));
-    const result = await gdrive.checkGoogleDrive({ platform: "win32", execImpl });
+    const execFileImpl = (file, args, opts, cb) => cb(new Error("tasklist is not recognized"));
+    const result = await gdrive.checkGoogleDrive({ platform: "win32", execFileImpl });
     assert.strictEqual(result.state, "unknown", "a failed check must not look like a dead Drive");
     assert.match(result.detail, /tasklist is not recognized/);
   });
@@ -126,6 +137,43 @@ describe("createGoogleDriveMonitor", () => {
     await Promise.all([first, second]);
 
     assert.strictEqual(calls, 1);
+  });
+
+  it("throttles forced checks so a client cannot spawn a process per request", async () => {
+    let calls = 0;
+    let clock = Date.parse("2026-09-12T06:00:00.000Z");
+    const monitor = gdrive.createGoogleDriveMonitor({
+      now: () => clock,
+      checkFn: async () => {
+        calls += 1;
+        return { state: "running", matched: [], detail: "" };
+      }
+    });
+
+    await monitor.checkNowIfStale();
+    assert.strictEqual(calls, 1);
+
+    // a second click a couple of seconds later must reuse the fresh result
+    clock += 2000;
+    await monitor.checkNowIfStale();
+    assert.strictEqual(calls, 1, "a recent result is reused instead of respawning");
+
+    // past the throttle window it checks for real again
+    clock += gdrive.FORCE_CHECK_MIN_AGE_MS + 1000;
+    await monitor.checkNowIfStale();
+    assert.strictEqual(calls, 2);
+  });
+
+  it("shares one 3-hour default with the config module", () => {
+    const saved = process.env.GDRIVE_CHECK_INTERVAL_MS;
+    delete process.env.GDRIVE_CHECK_INTERVAL_MS;
+    try {
+      const cfg = require("../lib/config");
+      assert.strictEqual(cfg.getConfig().GDRIVE_CHECK_INTERVAL_MS, gdrive.DEFAULT_CHECK_INTERVAL_MS);
+      assert.strictEqual(cfg.getConfig().GDRIVE_CHECK_INTERVAL_MS, 3 * 60 * 60 * 1000);
+    } finally {
+      if (saved !== undefined) process.env.GDRIVE_CHECK_INTERVAL_MS = saved;
+    }
   });
 
   it("checks immediately on start and again on the interval", async () => {
