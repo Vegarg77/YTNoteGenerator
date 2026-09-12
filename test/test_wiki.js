@@ -29,6 +29,13 @@ describe("wikiLookupFromUrl", () => {
     assert.deepStrictEqual(result, { title: "Sumer", anchor: "" });
   });
 
+  it("does not throw on a title containing a stray percent sign", () => {
+    // decodeURIComponent would raise URIError on "/wiki/100%_pure"
+    const result = wiki.wikiLookupFromUrl("https://en.wikipedia.org/wiki/100%_pure");
+    assert.strictEqual(result.title, "100% pure");
+    assert.strictEqual(result.anchor, "");
+  });
+
   it("rejects a non-Wikipedia host", () => {
     assert.throws(
       () => wiki.wikiLookupFromUrl("https://evil.example.com/wiki/Sumer"),
@@ -59,8 +66,8 @@ const REAL_FETCH = global.fetch;
 
 function stubFetch(payload, { status = 200 } = {}) {
   const calls = [];
-  global.fetch = async (url) => {
-    calls.push(String(url));
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), headers: options.headers || {} });
     return {
       ok: status >= 200 && status < 300,
       status,
@@ -104,13 +111,20 @@ describe("getWikipediaPage", () => {
       // exactly one request: the article body is not fetched twice, and the inline
       // coordinates mean no follow-up coordinate lookup
       assert.strictEqual(calls.length, 1);
-      const sent = new URL(calls[0]);
+      const sent = new URL(calls[0].url);
       assert.strictEqual(sent.searchParams.get("action"), "query");
       assert.strictEqual(sent.searchParams.get("redirects"), "1");
       assert.strictEqual(sent.searchParams.get("explaintext"), "1");
       assert.strictEqual(sent.searchParams.get("exsectionformat"), "wiki");
       assert.match(sent.searchParams.get("prop"), /extracts/);
       assert.strictEqual(sent.searchParams.get("titles"), "Private branch exchange");
+
+      // Wikimedia's User-Agent policy: a descriptive agent has to be sent, or the request
+      // gets throttled (the HTTP 429s seen against the live API).
+      const ua = Object.entries(calls[0].headers)
+        .find(([key]) => key.toLowerCase() === "user-agent");
+      assert.ok(ua, "a User-Agent header must be sent");
+      assert.match(ua[1], /^YTNoteGenerator\//);
     } finally {
       global.fetch = REAL_FETCH;
     }
@@ -147,7 +161,7 @@ describe("getWikipediaPage", () => {
       );
       assert.strictEqual(page.requestedTitle, "Sumer");
       assert.strictEqual(page.anchor, "History");
-      assert.strictEqual(new URL(calls[0]).searchParams.get("titles"), "Sumer");
+      assert.strictEqual(new URL(calls[0].url).searchParams.get("titles"), "Sumer");
     } finally {
       global.fetch = REAL_FETCH;
     }
