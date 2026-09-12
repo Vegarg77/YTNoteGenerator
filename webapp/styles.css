@@ -589,6 +589,68 @@ textarea::placeholder { color: #64748b; }
   opacity: 0.8;
 }
 
+/* ---- Google Drive watch dog indicator ---- */
+.gdrive-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(148, 163, 184, 0.08);
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.gdrive-indicator:hover {
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.gdrive-indicator:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.gdrive-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+
+.gdrive-indicator.is-running .gdrive-dot {
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74, 222, 128, 0.7);
+}
+
+.gdrive-indicator.is-stopped {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.gdrive-indicator.is-stopped .gdrive-dot {
+  background: #f87171;
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.7);
+}
+
+.gdrive-indicator.is-stopped .gdrive-label {
+  color: #f87171;
+  font-weight: 600;
+}
+
+.gdrive-indicator.is-unknown .gdrive-dot {
+  background: #fbbf24;
+}
+
+.gdrive-indicator.is-unsupported,
+.gdrive-indicator.is-pending {
+  opacity: 0.65;
+}
+
 /* ---- job cards: cancel button + elapsed timer ---- */
 .header-actions {
   display: flex;

@@ -7,6 +7,7 @@ const cfg = require("./lib/config");
 const utils = require("./lib/utils");
 const brightdata = require("./lib/brightdata");
 const wiki = require("./lib/wiki");
+const gdrive = require("./lib/gdrive");
 const tags = require("./lib/tags");
 const { version: APP_VERSION } = require("./package.json");
 
@@ -83,6 +84,13 @@ function serveStatic(req, res) {
 }
 
 const { SNAPSHOT_MAX_RETRIES, SNAPSHOT_RETRY_INTERVAL_MS, SNAPSHOT_RETRY_GRACE_MS } = cfg;
+
+// Google Drive can stop running on the host without anything noticing, so the server polls
+// for the process on an interval and the page shows the last result. Created here so the
+// cached status is warm before the first request; started with the listener below.
+const gdriveMonitor = gdrive.createGoogleDriveMonitor({
+  intervalMs: cfg.getConfig().GDRIVE_CHECK_INTERVAL_MS
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -228,6 +236,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === "/api/gdrive-status") {
+    if (req.method !== "GET") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+
+    try {
+      // ?refresh=1 forces a check now (the indicator's click action); otherwise this is the
+      // cached result from the last interval tick.
+      if (url.searchParams.get("refresh") === "1") {
+        await gdriveMonitor.checkNow();
+      }
+      sendJson(res, 200, gdriveMonitor.getStatus());
+    } catch (err) {
+      sendText(res, 500, `Google Drive status check failed: ${err.message}`);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/tags") {
     if (req.method !== "GET") {
       sendText(res, 405, "Method not allowed");
@@ -319,6 +346,9 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`YTNoteGenerator server running on http://localhost:${PORT}`);
+  // Begin the Google Drive watch dog once the listener is up (dotenv is loaded by now, so
+  // the configured interval is the real one).
+  gdriveMonitor.start();
 });
 
 // Never die silently. Node kills the process on unhandled rejections/exceptions by
