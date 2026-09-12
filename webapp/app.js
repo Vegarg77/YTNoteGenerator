@@ -1631,7 +1631,8 @@ async function runWikipedia() {
     const names = preflight.disambiguations.map((item) => item.entry.title).join(", ");
     const isSingle = preflight.disambiguations.length === 1;
     if (!workItems.length) {
-      clearPrefetchedPayloads(preflight.runnable);
+      // No cleanup needed here: an entry only receives a pre-flight payload when it lands
+      // in `runnable`, and this branch means `runnable` was empty.
       statusEl.textContent = `${names} ${isSingle ? "is a disambiguation page" : "are disambiguation pages"} — pick a topic below.`;
       isProcessing = false;
       updateActionButtons();
