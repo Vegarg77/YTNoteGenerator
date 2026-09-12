@@ -58,6 +58,18 @@ For each video, the app:
 Wikipedia article text, suggestions and coordinates are fetched from the official
 MediaWiki API and need no credentials.
 
+### Notes for terms that have no article of their own
+
+Many terms have no Wikipedia article — they redirect into a section of a larger one
+(`Private branch exchange` → `Business telephone system#Private branch exchange`). The
+lookup follows the redirect and builds the note from **that section and its subsections
+only**, titled with the term you searched for and sourced to the anchored URL. The parent
+article is never fetched for the note.
+
+If a term is a disambiguation page (`PBX` lists seven unrelated topics), the run stops
+for that term and lists its topics as pickable suggestions instead of writing a note
+built from the bare list.
+
 Optional Python helper dependency (legacy/utility script):
 
 - `yt-transcript-api` (listed in `requirements.txt` for `scripts/fetch_transcript.py`).
