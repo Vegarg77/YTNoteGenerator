@@ -6,11 +6,20 @@ const { fetchJson, DEFAULT_RETRY_429_DELAYS_MS } = require("../lib/http");
 const REAL_FETCH = global.fetch;
 
 // Queue of responses consumed in call order; the last entry repeats.
+function abortError() {
+  const err = new Error("The operation was aborted.");
+  err.name = "AbortError";
+  return err;
+}
+
 function stubFetch(responses) {
   const calls = [];
   global.fetch = async (url, options) => {
     const index = calls.length;
     calls.push({ url: String(url), signal: options?.signal });
+    // Real fetch rejects immediately when handed an already-aborted signal; the retry
+    // backoff relies on that to surface a cancellation as an AbortError.
+    if (options?.signal?.aborted) throw abortError();
     const spec = responses[Math.min(index, responses.length - 1)];
     if (spec instanceof Error) throw spec;
     return {
@@ -78,6 +87,45 @@ describe("fetchJson", () => {
   it("keeps the default backoff injectable but defined", () => {
     // asserted as a constant rather than by sleeping: the suite must not wait 1.5s + 3s
     assert.deepStrictEqual(DEFAULT_RETRY_429_DELAYS_MS, [1500, 3000]);
+  });
+
+  it("stops retrying as soon as the caller aborts during the backoff", async () => {
+    const calls = stubFetch([{ status: 429, body: "slow down" }]);
+    const controller = new AbortController();
+    const started = Date.now();
+    try {
+      const pending = fetchJson("https://example.test/api", {
+        retryOn429: true,
+        retryDelaysMs: [400, 400],
+        signal: controller.signal
+      });
+      setTimeout(() => controller.abort(), 40);
+
+      await assert.rejects(pending, (err) => err.name === "AbortError");
+      assert.strictEqual(calls.length, 2, "the initial attempt plus the one that saw the abort");
+      assert.ok(Date.now() - started < 300, "must not wait out the 400ms backoff");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("does not hang on an already-aborted signal", async () => {
+    const calls = stubFetch([{ status: 429, body: "slow down" }]);
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await assert.rejects(
+        () => fetchJson("https://example.test/api", {
+          retryOn429: true,
+          retryDelaysMs: [5000, 5000],
+          signal: controller.signal
+        }),
+        (err) => err.name === "AbortError"
+      );
+      assert.strictEqual(calls.length, 1);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
   });
 
   it("never retries a non-429 failure", async () => {

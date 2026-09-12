@@ -970,6 +970,12 @@ function disambiguationSuggestion(option) {
   };
 }
 
+// A pre-flight payload must never outlive the run that fetched it — a later run would
+// silently reuse a stale page for the same chip.
+function clearPrefetchedPayloads(items) {
+  items.forEach(({ entry }) => { delete entry.prefetched; });
+}
+
 async function processWikipediaTerm({ apiKey, model, entry, panel, signal }) {
   const term = entry.title;
   // The disambiguation pre-flight already fetched this page — reuse it rather than paying
@@ -1621,6 +1627,7 @@ async function runWikipedia() {
     const names = preflight.disambiguations.map((item) => item.entry.title).join(", ");
     const plural = preflight.disambiguations.length === 1 ? "" : "s";
     if (!workItems.length) {
+      clearPrefetchedPayloads(preflight.runnable);
       statusEl.textContent = `${names} ${plural ? "are" : "is"} a disambiguation page${plural} — pick a topic below.`;
       isProcessing = false;
       updateActionButtons();
@@ -1648,7 +1655,7 @@ async function runWikipedia() {
   );
 
   // Never leave a pre-flight payload on a chip that survives into a later run.
-  workItems.forEach(({ entry }) => { delete entry.prefetched; });
+  clearPrefetchedPayloads(workItems);
 
   isProcessing = false;
   finalizeRunResults(results, panels, "wiki");
