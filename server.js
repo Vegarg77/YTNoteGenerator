@@ -346,8 +346,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`YTNoteGenerator server running on http://localhost:${PORT}`);
-  // Begin the Google Drive watch dog once the listener is up (dotenv is loaded by now, so
-  // the configured interval is the real one).
+  // Begin the Drive watch dog. The monitor itself is created above (after cfg.loadDotenv),
+  // which is where the configured interval was read.
   gdriveMonitor.start();
 });
 

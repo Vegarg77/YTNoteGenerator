@@ -60,15 +60,17 @@ describe("checkGoogleDrive", () => {
     assert.deepStrictEqual(result.matched, ["GoogleDriveFS.exe"]);
   });
 
-  it("spawns tasklist directly, without a shell", async () => {
+  it("spawns tasklist directly, without a shell, under a deadline", async () => {
     let seen = null;
     const execFileImpl = (file, args, opts, cb) => {
-      seen = { file, args };
+      seen = { file, args, opts };
       cb(null, RUNNING_CSV);
     };
     await gdrive.checkGoogleDrive({ platform: "win32", execFileImpl });
     assert.strictEqual(seen.file, "tasklist");
     assert.deepStrictEqual(seen.args, ["/NH", "/FO", "CSV"]);
+    // without a timeout a hung listing would leave the monitor wedged forever
+    assert.strictEqual(seen.opts.timeout, gdrive.LISTING_TIMEOUT_MS);
   });
 
   it("reports stopped when the listing has no Drive process", async () => {
