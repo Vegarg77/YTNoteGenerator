@@ -1,7 +1,7 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
 
-const { fetchJson } = require("../lib/http");
+const { fetchJson, DEFAULT_RETRY_429_DELAYS_MS } = require("../lib/http");
 
 const REAL_FETCH = global.fetch;
 
@@ -41,7 +41,7 @@ describe("fetchJson", () => {
       { status: 200, body: JSON.stringify({ ok: true }) }
     ]);
     try {
-      const data = await fetchJson("https://example.test/api", { retryOn429: true });
+      const data = await fetchJson("https://example.test/api", { retryOn429: true, retryDelaysMs: [1, 1] });
       assert.deepStrictEqual(data, { ok: true });
       assert.strictEqual(calls.length, 2);
     } finally {
@@ -66,13 +66,18 @@ describe("fetchJson", () => {
     const calls = stubFetch([{ status: 429, body: "slow down" }]);
     try {
       await assert.rejects(
-        () => fetchJson("https://example.test/api", { retryOn429: true, label: "Wikipedia API" }),
-        /Wikipedia is rate-limiting requests — try again in a moment/
+        () => fetchJson("https://example.test/api", { retryOn429: true, retryDelaysMs: [1, 1], label: "Wikipedia API" }),
+        /Wikipedia API GET https:\/\/example\.test\/api failed \(429\): rate-limited — try again in a moment/
       );
       assert.strictEqual(calls.length, 3, "one initial attempt plus two retries");
     } finally {
       global.fetch = REAL_FETCH;
     }
+  });
+
+  it("keeps the default backoff injectable but defined", () => {
+    // asserted as a constant rather than by sleeping: the suite must not wait 1.5s + 3s
+    assert.deepStrictEqual(DEFAULT_RETRY_429_DELAYS_MS, [1500, 3000]);
   });
 
   it("never retries a non-429 failure", async () => {

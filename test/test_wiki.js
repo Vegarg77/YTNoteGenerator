@@ -204,15 +204,16 @@ describe("parseDisambiguationOptions", () => {
     assert.deepStrictEqual(options.map((o) => o.title), ["Polymer-bonded explosive", "PBX (explosive)", "PhotoBox"]);
   });
 
-  it("skips non-article namespaces and dedupes repeated topics", () => {
+  it("skips non-article namespaces but keeps titles that merely contain a colon", () => {
     const noisy = [
       "*[[File:PBX.jpg|thumb]]",
       "*[[Category:Telephony]]",
+      "*[[Star Trek: Voyager]]",
       "*[[Private branch exchange]]",
       "*[[Private branch exchange|PBX]]"
     ].join("\n");
     const options = wiki.parseDisambiguationOptions(noisy);
-    assert.deepStrictEqual(options.map((o) => o.title), ["Private branch exchange"]);
+    assert.deepStrictEqual(options.map((o) => o.title), ["Star Trek: Voyager", "Private branch exchange"]);
   });
 
   it("returns an empty list for a page with no list items", () => {

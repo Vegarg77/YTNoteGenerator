@@ -955,26 +955,19 @@ async function preflightWikipediaEntries(items) {
   return { runnable, disambiguations };
 }
 
-// Drop the disambiguation page from the queue and render its topics in the suggestion
-// list the user already interacts with; picking one adds it as the term to note.
-function offerDisambiguationTopics({ entry, itemType, options }) {
-  const isBusiness = itemType === "business";
-  const selected = isBusiness ? selectedWikiBusinesses : selectedWikiTerms;
+// Drop a queued entry that turned out to be a disambiguation page.
+function removeQueuedEntry({ entry, itemType }) {
+  const selected = itemType === "business" ? selectedWikiBusinesses : selectedWikiTerms;
   const idx = selected.indexOf(entry);
   if (idx >= 0) selected.splice(idx, 1);
-  if (isBusiness) {
-    renderSelectedWikiBusinesses();
-  } else {
-    renderSelectedWikiTerms();
-  }
-  renderWikiSuggestions(
-    options.map((option) => ({
-      title: option.title,
-      description: option.description || "Wikipedia article",
-      url: option.url || ""
-    })),
-    isBusiness ? "business" : "term"
-  );
+}
+
+function disambiguationSuggestion(option) {
+  return {
+    title: option.title,
+    description: option.description || "Wikipedia article",
+    url: option.url || ""
+  };
 }
 
 async function processWikipediaTerm({ apiKey, model, entry, panel, signal }) {
@@ -1605,21 +1598,35 @@ async function runWikipedia() {
   // explosive, Private branch exchange, PhotoBox …) cannot become a note. Offer its topics as
   // suggestions instead of writing a note built from the bare list, and run whatever else was
   // queued. This costs one extra lookup per item.
+  statusEl.textContent = `Checking ${workItems.length} Wikipedia item${workItems.length === 1 ? "" : "s"}…`;
   const preflight = await preflightWikipediaEntries(workItems);
   if (preflight.disambiguations.length) {
-    for (const item of preflight.disambiguations) {
-      offerDisambiguationTopics(item);
+    // Remove every disambiguation entry first, then render once per list. Rendering inside
+    // the loop would clear the previous page's topics, leaving only the last one pickable
+    // while the status text promised them all.
+    preflight.disambiguations.forEach(removeQueuedEntry);
+    renderSelectedWikiTerms();
+    renderSelectedWikiBusinesses();
+    for (const itemType of ["dictionary", "business"]) {
+      const options = preflight.disambiguations
+        .filter((item) => item.itemType === itemType)
+        .flatMap((item) => item.options)
+        .map(disambiguationSuggestion);
+      if (options.length) {
+        renderWikiSuggestions(options, itemType === "business" ? "business" : "term");
+      }
     }
+
     workItems = preflight.runnable;
+    const names = preflight.disambiguations.map((item) => item.entry.title).join(", ");
+    const plural = preflight.disambiguations.length === 1 ? "" : "s";
     if (!workItems.length) {
-      statusEl.textContent = preflight.disambiguations.length === 1
-        ? `${preflight.disambiguations[0].entry.title} is a disambiguation page — pick a topic below.`
-        : "Those terms are disambiguation pages — pick a topic below.";
+      statusEl.textContent = `${names} ${plural ? "are" : "is"} a disambiguation page${plural} — pick a topic below.`;
       isProcessing = false;
       updateActionButtons();
       return;
     }
-    statusEl.textContent = `Skipped ${preflight.disambiguations.length} disambiguation page${preflight.disambiguations.length === 1 ? "" : "s"} — pick a topic below. Running ${workItems.length}.`;
+    statusEl.textContent = `Skipped ${names} (disambiguation page${plural}) — pick a topic below. Running ${workItems.length}.`;
   }
 
   const offset = progressContainer.children.length;
