@@ -12,7 +12,8 @@ describe("wikiLookupFromUrl", () => {
     );
     assert.deepStrictEqual(result, {
       title: "Business telephone system",
-      anchor: "Private branch exchange"
+      anchor: "Private branch exchange",
+      origin: "https://en.wikipedia.org"
     });
   });
 
@@ -26,7 +27,12 @@ describe("wikiLookupFromUrl", () => {
 
   it("returns an empty anchor for a plain article URL", () => {
     const result = wiki.wikiLookupFromUrl("https://en.wikipedia.org/wiki/Sumer");
-    assert.deepStrictEqual(result, { title: "Sumer", anchor: "" });
+    assert.deepStrictEqual(result, { title: "Sumer", anchor: "", origin: "https://en.wikipedia.org" });
+  });
+
+  it("reports the host of a non-English link", () => {
+    const result = wiki.wikiLookupFromUrl("https://de.wikipedia.org/wiki/Sumer");
+    assert.strictEqual(result.origin, "https://de.wikipedia.org");
   });
 
   it("does not throw on a title containing a stray percent sign", () => {
@@ -182,6 +188,37 @@ describe("getWikipediaPage", () => {
       assert.strictEqual(page.location, null);
       // prop=coordinates is already in the query, so there is no follow-up lookup to make
       assert.strictEqual(calls.length, 1);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("queries the same wiki a pasted link came from", async () => {
+    const calls = stubFetch({
+      query: {
+        pages: [{ pageid: 5, ns: 0, title: "Sumer", fullurl: "https://de.wikipedia.org/wiki/Sumer", extract: "Sumer war..." }]
+      }
+    });
+    try {
+      await wiki.getWikipediaPage("", undefined, "https://de.wikipedia.org/wiki/Sumer");
+      // pinned to en.wikipedia.org this would have queried the wrong wiki and come back
+      // with the wrong article (or a bogus "no article titled …")
+      assert.match(calls[0].url, /^https:\/\/de\.wikipedia\.org\/w\/api\.php\?/);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("prefers a pasted fragment over the redirect's own anchor", async () => {
+    stubFetch({
+      query: {
+        redirects: [{ from: "Sumerians", to: "Sumer", tofragment: "Redirect section" }],
+        pages: [{ pageid: 1, ns: 0, title: "Sumer", fullurl: "https://en.wikipedia.org/wiki/Sumer", extract: "Sumer was..." }]
+      }
+    });
+    try {
+      const page = await wiki.getWikipediaPage("", undefined, "https://en.wikipedia.org/wiki/Sumerians#History");
+      assert.strictEqual(page.anchor, "History", "the fragment the caller pasted wins");
     } finally {
       global.fetch = REAL_FETCH;
     }
