@@ -382,6 +382,37 @@ describe("getWikipediaPage", () => {
     }
   });
 
+  it("offers topics for a disambiguation page even when the lookup carried an anchor", async () => {
+    // the page property must win over the scoping hint: an anchor must not turn a
+    // disambiguation list into a note (e.g. a pasted "/wiki/PBX#Foo")
+    const calls = stubFetch([
+      {
+        query: {
+          redirects: [{ from: "PBX", to: "PBX", tofragment: "Foo" }],
+          pages: [{
+            pageid: 334414, ns: 0, title: "PBX",
+            fullurl: "https://en.wikipedia.org/wiki/PBX",
+            coordinates: [{ lat: 1, lon: 2 }],
+            pageprops: { disambiguation: "" },
+            extract: "== Foo ==\nPBX may refer to:"
+          }]
+        }
+      },
+      { parse: { title: "PBX", wikitext: "*[[Private branch exchange]], a telephone exchange" } }
+    ]);
+
+    try {
+      const page = await wiki.getWikipediaPage("", undefined, "https://en.wikipedia.org/wiki/PBX#Foo");
+
+      assert.strictEqual(page.extract, "");
+      assert.deepStrictEqual(page.disambiguation.map((o) => o.title), ["Private branch exchange"]);
+      assert.strictEqual(page.sectionTitle, "");
+      assert.ok(calls.length === 2);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
   it("falls back to the plain extract when a disambiguation page yields no parseable topics", async () => {
     stubFetch([
       {
