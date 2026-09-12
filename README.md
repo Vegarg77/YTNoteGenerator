@@ -64,9 +64,14 @@ Many terms have no Wikipedia article — they redirect into a section of a large
 (`Private branch exchange` → `Business telephone system#Private branch exchange`). The
 lookup follows the redirect and builds the note from **that section and its subsections
 only**, titled with the term you searched for and sourced to the anchored URL. The parent
-article is never fetched for the note.
+article is not fetched for the note.
 
-If a term is a disambiguation page (`PBX` lists seven unrelated topics), the run stops
+If a redirect points at a section that no longer exists — Wikipedia has stale ones, e.g.
+`spunbond` → `Nonwoven fabric#Spunlaid nonwovens` where the article's headings are
+`Spunbond nonwovens` and `Spunlace nonwovens` — the note falls back to the whole parent
+article with a plain source URL, and the run log says why.
+
+If a term is a disambiguation page (`PBX` lists six unrelated topics), the run stops
 for that term and lists its topics as pickable suggestions instead of writing a note
 built from the bare list.
 

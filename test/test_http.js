@@ -128,6 +128,29 @@ describe("fetchJson", () => {
     }
   });
 
+  it("releases the discarded 429 response before backing off", async () => {
+    let cancels = 0;
+    global.fetch = async (url, options) => {
+      if (options?.signal?.aborted) throw abortError();
+      return {
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        body: { cancel: async () => { cancels += 1; } },
+        text: async () => "slow down"
+      };
+    };
+    try {
+      await assert.rejects(
+        () => fetchJson("https://example.test/api", { retryOn429: true, retryDelaysMs: [1, 1] }),
+        /rate-limited/
+      );
+      assert.strictEqual(cancels, 2, "one cancel per retried 429");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
   it("never retries a non-429 failure", async () => {
     const calls = stubFetch([{ status: 500, statusText: "Server Error", body: "boom" }]);
     try {

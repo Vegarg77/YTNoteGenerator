@@ -937,6 +937,10 @@ async function preflightWikipediaEntries(items) {
   const disambiguations = [];
 
   for (const item of items) {
+    // Drop any payload from an earlier run before this lookup: if this one throws, the catch
+    // below leaves the entry untouched, and the job must re-fetch rather than reuse a stale
+    // page for the same chip.
+    delete item.entry.prefetched;
     try {
       const data = await fetchWikipediaPage(item.entry.title, item.entry.url);
       const options = Array.isArray(data?.disambiguation) ? data.disambiguation : [];
@@ -1625,15 +1629,15 @@ async function runWikipedia() {
 
     workItems = preflight.runnable;
     const names = preflight.disambiguations.map((item) => item.entry.title).join(", ");
-    const plural = preflight.disambiguations.length === 1 ? "" : "s";
+    const isSingle = preflight.disambiguations.length === 1;
     if (!workItems.length) {
       clearPrefetchedPayloads(preflight.runnable);
-      statusEl.textContent = `${names} ${plural ? "are" : "is"} a disambiguation page${plural} — pick a topic below.`;
+      statusEl.textContent = `${names} ${isSingle ? "is a disambiguation page" : "are disambiguation pages"} — pick a topic below.`;
       isProcessing = false;
       updateActionButtons();
       return;
     }
-    statusEl.textContent = `Skipped ${names} (disambiguation page${plural}) — pick a topic below. Running ${workItems.length}.`;
+    statusEl.textContent = `Skipped ${names} (disambiguation ${isSingle ? "page" : "pages"}) — pick a topic below. Running ${workItems.length}.`;
   }
 
   const offset = progressContainer.children.length;
