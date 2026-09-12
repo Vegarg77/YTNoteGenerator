@@ -75,6 +75,22 @@ If a term is a disambiguation page (`PBX` lists six unrelated topics), the run s
 for that term and lists its topics as pickable suggestions instead of writing a note
 built from the bare list.
 
+### Google Drive indicator
+
+This app is often run on an always-on host (for example a Windows VM) that has Google
+Drive for desktop installed to sync the note folders. Drive can stop running after a few
+days and quietly stop syncing, so the page shows a small indicator in the top bar:
+
+- **Drive** with a green dot — the Drive process is running.
+- **Drive down** in red — no Drive process was found; restart Drive to resume syncing.
+- **Drive ?** — the check itself failed, which is *not* reported as "down".
+- **Drive n/a** — the process check is Windows-only, so nothing to report on this host.
+
+The server checks the process listing every 3 hours (`GDRIVE_CHECK_INTERVAL_MS`), caches
+the result, and the page re-reads it every 5 minutes. Clicking the indicator forces a fresh
+check immediately. Detection looks for `GoogleDriveFS.exe` (Drive for desktop) as well as
+the older `GoogleDrive.exe` and `googledrivesync.exe` names.
+
 Optional Python helper dependency (legacy/utility script):
 
 - `yt-transcript-api` (listed in `requirements.txt` for `scripts/fetch_transcript.py`).
@@ -103,6 +119,8 @@ Optional overrides supported by the server:
 
 - `WIKI_API_TIMEOUT_MS` (default `20000`) — abort budget for the Wikipedia lookup; raise it
   if a very long article times out.
+- `GDRIVE_CHECK_INTERVAL_MS` (default `10800000` = 3 hours) — how often the server checks
+  whether Google Drive is still running on this machine.
 - `OPENAI_MODEL` (default `deepseek/deepseek-v4-flash-0731` — pinned to the July 2026 retrain;
   OpenRouter's bare `deepseek/deepseek-v4-flash` alias resolves to an older April 2026 snapshot)
 - `OPENAI_BASE_URL` (default `https://openrouter.ai/api`) — point at any OpenAI-compatible API.

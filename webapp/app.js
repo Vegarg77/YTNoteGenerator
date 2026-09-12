@@ -1846,6 +1846,89 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// ---- Google Drive watch dog ----
+// The server checks for the Drive process on an interval (3 hours by default) and caches
+// the result, so the page can render instantly. The page re-reads that cache periodically
+// and a click forces a fresh check; nothing here ever talks to Drive itself.
+const GDRIVE_POLL_MS = 5 * 60 * 1000;
+const GDRIVE_STATE_CLASS = {
+  running: "is-running",
+  stopped: "is-stopped",
+  unknown: "is-unknown",
+  unsupported: "is-unsupported",
+  pending: "is-pending"
+};
+const GDRIVE_LABELS = {
+  running: "Drive",
+  stopped: "Drive down",
+  unknown: "Drive ?",
+  unsupported: "Drive n/a",
+  pending: "Drive …"
+};
+const GDRIVE_HINTS = {
+  running: "Google Drive is running on this machine.",
+  stopped: "Google Drive is NOT running on this machine — restart it to resume syncing.",
+  unknown: "Could not determine whether Google Drive is running (the process check failed).",
+  unsupported: "Automatic Google Drive checks are implemented for Windows only.",
+  pending: "Waiting for the first Google Drive check."
+};
+let gdriveBusy = false;
+
+function gdriveCheckedAgo(iso) {
+  if (!iso) return "not checked yet";
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 1) return "checked just now";
+  if (minutes < 60) return `checked ${minutes}m ago`;
+  return `checked ${Math.round(minutes / 60)}h ago`;
+}
+
+function renderGdriveIndicator(status) {
+  const btn = el("gdriveIndicator");
+  if (!btn) return;
+
+  const state = status?.state || "pending";
+  btn.className = `gdrive-indicator ${GDRIVE_STATE_CLASS[state] || "is-pending"}`;
+
+  const label = el("gdriveLabel");
+  if (label) label.textContent = GDRIVE_LABELS[state] || "Drive";
+
+  const every = status?.intervalMs ? ` · checks every ${Math.round(status.intervalMs / 3600000)}h` : "";
+  btn.title = `${GDRIVE_HINTS[state] || ""} (${gdriveCheckedAgo(status?.checkedAt)})`
+    + (status?.detail ? ` — ${status.detail}` : "")
+    + every
+    + "\nClick to check now.";
+}
+
+async function refreshGdriveStatus({ force = false } = {}) {
+  const btn = el("gdriveIndicator");
+  if (!btn || gdriveBusy) return;
+
+  if (force) {
+    gdriveBusy = true;
+    btn.disabled = true;
+  }
+
+  try {
+    const resp = await fetch(`/api/gdrive-status${force ? "?refresh=1" : ""}`);
+    if (resp.ok) renderGdriveIndicator(await resp.json());
+  } catch {
+    // keep the previous rendering; a failed poll should not shout at the user
+  } finally {
+    if (force) {
+      gdriveBusy = false;
+      btn.disabled = false;
+    }
+  }
+}
+
+function initGdriveIndicator() {
+  const btn = el("gdriveIndicator");
+  if (!btn) return;
+  btn.addEventListener("click", () => refreshGdriveStatus({ force: true }));
+  refreshGdriveStatus();
+  setInterval(() => refreshGdriveStatus(), GDRIVE_POLL_MS);
+}
+
 el("settingsBtn").addEventListener("click", openSettings);
 el("settingsClose").addEventListener("click", closeSettings);
 el("settingsSave").addEventListener("click", saveSettings);
@@ -1855,5 +1938,6 @@ el("settingsOverlay").addEventListener("click", (event) => {
 
 window.addEventListener("load", () => {
   loadSettings();
+  initGdriveIndicator();
   setActiveTab(activeTab);
 });
