@@ -84,6 +84,8 @@ BRIGHT_DATA_YT_DATASET_ID=...
 
 Optional overrides supported by the server:
 
+- `WIKI_API_TIMEOUT_MS` (default `20000`) — abort budget for the Wikipedia lookup; raise it
+  if a very long article times out.
 - `OPENAI_MODEL` (default `deepseek/deepseek-v4-flash-0731` — pinned to the July 2026 retrain;
   OpenRouter's bare `deepseek/deepseek-v4-flash` alias resolves to an older April 2026 snapshot)
 - `OPENAI_BASE_URL` (default `https://openrouter.ai/api`) — point at any OpenAI-compatible API.

@@ -84,10 +84,6 @@ function serveStatic(req, res) {
 
 const { SNAPSHOT_MAX_RETRIES, SNAPSHOT_RETRY_INTERVAL_MS, SNAPSHOT_RETRY_GRACE_MS } = cfg;
 
-// The Wikipedia leg is a single synchronous MediaWiki API call now (no Bright Data
-// snapshot to trigger and poll), so its request budget is just one HTTP round trip.
-const WIKI_API_TIMEOUT_MS = 20000;
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -216,8 +212,11 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // One synchronous MediaWiki API call (no Bright Data snapshot to trigger and poll), so
+    // the budget is a single HTTP round trip — configurable, since TextExtracts is slow on
+    // very long articles.
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), WIKI_API_TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), cfg.getConfig().WIKI_API_TIMEOUT_MS);
     try {
       const page = await wiki.getWikipediaPage(title, ctrl.signal, articleUrlParam);
       sendJson(res, 200, page);

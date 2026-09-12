@@ -167,6 +167,26 @@ describe("getWikipediaPage", () => {
     }
   });
 
+  it("makes a single request for an article with no coordinates", async () => {
+    const calls = stubFetch({
+      query: {
+        pages: [{
+          pageid: 3, ns: 0, title: "Business telephone system",
+          fullurl: "https://en.wikipedia.org/wiki/Business_telephone_system",
+          extract: "A business telephone system is..."
+        }]
+      }
+    });
+    try {
+      const page = await wiki.getWikipediaPage("Business telephone system", undefined, undefined);
+      assert.strictEqual(page.location, null);
+      // prop=coordinates is already in the query, so there is no follow-up lookup to make
+      assert.strictEqual(calls.length, 1);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
   it("throws a clear error for a missing article", async () => {
     stubFetch({ query: { pages: [{ ns: 0, title: "Zzzz nope", missing: true }] } });
     try {
