@@ -66,14 +66,173 @@ describe("wikiArticleUrl", () => {
   });
 });
 
+// Shaped like a real exsectionformat=wiki extract: level-2 sections, level-3 and level-4
+// children, and the trailing boilerplate sections that must fall outside every slice.
+const ARTICLE = [
+  "A business telephone system is a telephone system typically used in business environments.",
+  "",
+  "== Key telephone system ==",
+  "A key telephone system is one where the user selects the line.",
+  "",
+  "=== Electronic shared-control system ===",
+  "Later electronic variants arrived.",
+  "",
+  "== Private branch exchange ==",
+  "A Private Branch Exchange (PBX) system is a private phone network.",
+  "",
+  "=== History ===",
+  "The term PBX originated when switchboard operators managed company switchboards.",
+  "",
+  "==== Manual PBX ====",
+  "The first manual PBX was installed in 1879.",
+  "",
+  "=== Hosted PBX systems ===",
+  "Hosted PBX runs the call routing in software.",
+  "",
+  "== See also ==",
+  "* Business telephone system",
+  "",
+  "== References ==",
+  "{{reflist}}"
+].join("\n");
+
+describe("sliceSectionSubtree", () => {
+  it("keeps the section and all of its subsections, and stops at the next peer section", () => {
+    const result = wiki.sliceSectionSubtree(ARTICLE, "Private branch exchange");
+    assert.ok(result, "expected a slice");
+    assert.strictEqual(result.level, 2);
+    assert.strictEqual(result.title, "Private branch exchange");
+
+    assert.match(result.text, /A Private Branch Exchange \(PBX\) system/);
+    assert.match(result.text, /=== History ===/);
+    assert.match(result.text, /==== Manual PBX ====/);
+    assert.match(result.text, /=== Hosted PBX systems ===/);
+
+    // the next level-2 section and everything after it is out of scope
+    assert.doesNotMatch(result.text, /See also/);
+    assert.doesNotMatch(result.text, /References/);
+    // and so is the preceding section
+    assert.doesNotMatch(result.text, /Key telephone system/);
+  });
+
+  it("slices a level-3 section without swallowing its level-2 parent's other children", () => {
+    const result = wiki.sliceSectionSubtree(ARTICLE, "History");
+    assert.ok(result);
+    assert.strictEqual(result.level, 3);
+    assert.match(result.text, /==== Manual PBX ====/);
+    assert.doesNotMatch(result.text, /Hosted PBX systems/);
+  });
+
+  it("matches anchors that use underscores instead of spaces", () => {
+    const result = wiki.sliceSectionSubtree(ARTICLE, "Private_branch_exchange");
+    assert.ok(result);
+    assert.strictEqual(result.title, "Private branch exchange");
+  });
+
+  it("returns null when the anchor matches no heading", () => {
+    assert.strictEqual(wiki.sliceSectionSubtree(ARTICLE, "Renamed section"), null);
+    assert.strictEqual(wiki.sliceSectionSubtree(ARTICLE, ""), null);
+  });
+
+  it("does not mistake prose containing '=' for a heading", () => {
+    const withFormula = [
+      "== Real section ==",
+      "The relationship C = 2*pi*r holds.",
+      "A = B = C",
+      "",
+      "== Next ==",
+      "unrelated"
+    ].join("\n");
+    const result = wiki.sliceSectionSubtree(withFormula, "Real section");
+    assert.match(result.text, /C = 2\*pi\*r/);
+    assert.doesNotMatch(result.text, /unrelated/);
+  });
+});
+
+describe("parseDisambiguationOptions", () => {
+  // Real PBX wikitext: flat bullets, italic labels, a prose entry with no leading link,
+  // and a multi-link entry whose second link is inside the description.
+  const PBX_WIKITEXT = [
+    "'''PBX''' may refer to:",
+    "",
+    "*[[Pakubuwono X]], the tenth ''Susuhunan'' of Surakarta in Java, Indonesia",
+    "*[[Polymer-bonded explosive]]",
+    "*[[Pre-B-cell leukemia homeobox]]",
+    "*[[Private branch exchange]], a telephone exchange that serves a particular business or office",
+    "*''[[PBX Funicular Intaglio Zone]]'', a 2012 album by John Frusciante",
+    "*PBX, a rewrite of the [[Project Builder]] IDE for Mac OS X systems, now known as [[Xcode]]",
+    "*[[PhotoBox]], a digital photo printing service",
+    "",
+    "{{disambig}}"
+  ].join("\n");
+
+  it("offers each linked topic with its description", () => {
+    const options = wiki.parseDisambiguationOptions(PBX_WIKITEXT);
+    const titles = options.map((option) => option.title);
+
+    assert.deepStrictEqual(titles, [
+      "Pakubuwono X",
+      "Polymer-bonded explosive",
+      "Pre-B-cell leukemia homeobox",
+      "Private branch exchange",
+      "PBX Funicular Intaglio Zone",
+      "PhotoBox"
+    ]);
+
+    const pbe = options.find((option) => option.title === "Private branch exchange");
+    assert.strictEqual(pbe.target, "Private branch exchange");
+    assert.strictEqual(pbe.description, "a telephone exchange that serves a particular business or office");
+    assert.strictEqual(pbe.url, "https://en.wikipedia.org/wiki/Private_branch_exchange");
+
+    // italic label and italic description markup are stripped
+    const album = options.find((option) => option.title === "PBX Funicular Intaglio Zone");
+    assert.strictEqual(album.description, "a 2012 album by John Frusciante");
+  });
+
+  it("skips prose entries that do not lead with a link", () => {
+    const options = wiki.parseDisambiguationOptions(PBX_WIKITEXT);
+    assert.strictEqual(options.some((option) => option.title.includes("rewrite")), false);
+  });
+
+  it("flattens nested sub-bullets into the same list", () => {
+    const nested = [
+      "*[[Polymer-bonded explosive]]",
+      "**[[PBX (explosive)]], a family of related explosives",
+      "*[[PhotoBox]]"
+    ].join("\n");
+    const options = wiki.parseDisambiguationOptions(nested);
+    assert.deepStrictEqual(options.map((o) => o.title), ["Polymer-bonded explosive", "PBX (explosive)", "PhotoBox"]);
+  });
+
+  it("skips non-article namespaces but keeps titles that merely contain a colon", () => {
+    const noisy = [
+      "*[[File:PBX.jpg|thumb]]",
+      "*[[Category:Telephony]]",
+      "*[[Star Trek: Voyager]]",
+      "*[[Private branch exchange]]",
+      "*[[Private branch exchange|PBX]]"
+    ].join("\n");
+    const options = wiki.parseDisambiguationOptions(noisy);
+    assert.deepStrictEqual(options.map((o) => o.title), ["Star Trek: Voyager", "Private branch exchange"]);
+  });
+
+  it("returns an empty list for a page with no list items", () => {
+    assert.deepStrictEqual(wiki.parseDisambiguationOptions("Just prose.\n\n{{disambig}}"), []);
+  });
+});
+
 // ---- getWikipediaPage against a stubbed API ----
 
 const REAL_FETCH = global.fetch;
 
-function stubFetch(payload, { status = 200 } = {}) {
+// `payloads` may be a single response object (returned for every call) or an array of
+// responses consumed in call order.
+function stubFetch(payloads, { status = 200 } = {}) {
   const calls = [];
   global.fetch = async (url, options = {}) => {
+    const index = calls.length;
     calls.push({ url: String(url), headers: options.headers || {} });
+    const payload = Array.isArray(payloads) ? payloads[Math.min(index, payloads.length - 1)] : payloads;
     return {
       ok: status >= 200 && status < 300,
       status,
@@ -85,7 +244,7 @@ function stubFetch(payload, { status = 200 } = {}) {
 }
 
 describe("getWikipediaPage", () => {
-  it("resolves a section redirect to its parent article and reports the anchor", async () => {
+  it("resolves a section redirect and returns only that section's subtree", async () => {
     const calls = stubFetch({
       query: {
         redirects: [
@@ -98,7 +257,7 @@ describe("getWikipediaPage", () => {
             title: "Business telephone system",
             fullurl: "https://en.wikipedia.org/wiki/Business_telephone_system",
             coordinates: [{ lat: 1, lon: 2 }],
-            extract: "== Private branch exchange ==\nA Private Branch Exchange (PBX) system..."
+            extract: ARTICLE
           }
         ]
       }
@@ -110,12 +269,17 @@ describe("getWikipediaPage", () => {
       assert.strictEqual(page.title, "Business telephone system");
       assert.strictEqual(page.anchor, "Private branch exchange");
       assert.strictEqual(page.requestedTitle, "Private branch exchange");
-      assert.strictEqual(page.url, "https://en.wikipedia.org/wiki/Business_telephone_system");
+      assert.strictEqual(page.sectionTitle, "Private branch exchange");
+      assert.strictEqual(page.sectionLevel, 2);
+      assert.strictEqual(page.url, "https://en.wikipedia.org/wiki/Business_telephone_system#Private_branch_exchange");
       assert.deepStrictEqual(page.location, { lat: 1, lon: 2 });
-      assert.match(page.extract, /Private Branch Exchange/);
 
-      // exactly one request: the article body is not fetched twice, and the inline
-      // coordinates mean no follow-up coordinate lookup
+      // the note source is the PBX section, not the whole parent article
+      assert.match(page.extract, /A Private Branch Exchange \(PBX\) system/);
+      assert.match(page.extract, /=== History ===/);
+      assert.doesNotMatch(page.extract, /Key telephone system/);
+      assert.doesNotMatch(page.extract, /See also/);
+
       assert.strictEqual(calls.length, 1);
       const sent = new URL(calls[0].url);
       assert.strictEqual(sent.searchParams.get("action"), "query");
@@ -123,6 +287,7 @@ describe("getWikipediaPage", () => {
       assert.strictEqual(sent.searchParams.get("explaintext"), "1");
       assert.strictEqual(sent.searchParams.get("exsectionformat"), "wiki");
       assert.match(sent.searchParams.get("prop"), /extracts/);
+      assert.match(sent.searchParams.get("prop"), /pageprops/);
       assert.strictEqual(sent.searchParams.get("titles"), "Private branch exchange");
 
       // Wikimedia's User-Agent policy: a descriptive agent has to be sent, or the request
@@ -136,7 +301,7 @@ describe("getWikipediaPage", () => {
     }
   });
 
-  it("reports no anchor for a redirect that targets a whole article", async () => {
+  it("returns the full article when the redirect has no section anchor", async () => {
     stubFetch({
       query: {
         redirects: [{ from: "Sumerians", to: "Sumer" }],
@@ -147,7 +312,125 @@ describe("getWikipediaPage", () => {
       const page = await wiki.getWikipediaPage("Sumerians", undefined, undefined);
       assert.strictEqual(page.title, "Sumer");
       assert.strictEqual(page.anchor, "");
-      assert.strictEqual(page.requestedTitle, "Sumerians");
+      assert.strictEqual(page.sectionTitle, "");
+      assert.strictEqual(page.extract, "Sumer was...");
+      assert.strictEqual(page.url, "https://en.wikipedia.org/wiki/Sumer");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("falls back to the full article when a redirect's anchor is stale", async () => {
+    // seen live: "spunbond" -> Nonwoven fabric#Spunlaid nonwovens, but the article's
+    // headings are "Spunbond nonwovens" / "Spunlace nonwovens"
+    stubFetch({
+      query: {
+        redirects: [{ from: "Spunbond", to: "Business telephone system", tofragment: "Renamed section" }],
+        pages: [{
+          pageid: 1, ns: 0, title: "Business telephone system",
+          fullurl: "https://en.wikipedia.org/wiki/Business_telephone_system",
+          coordinates: [{ lat: 1, lon: 2 }],
+          extract: ARTICLE
+        }]
+      }
+    });
+    try {
+      const page = await wiki.getWikipediaPage("Spunbond", undefined, undefined);
+
+      assert.strictEqual(page.anchorStale, true);
+      assert.strictEqual(page.sectionTitle, "");
+      assert.strictEqual(page.extract, ARTICLE);
+      // the dead fragment is never attached to the source link
+      assert.strictEqual(page.url, "https://en.wikipedia.org/wiki/Business_telephone_system");
+      assert.doesNotMatch(page.url, /#/);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("offers the topics of a disambiguation page instead of its bare list", async () => {
+    const calls = stubFetch([
+      {
+        query: {
+          pages: [{
+            pageid: 334414,
+            ns: 0,
+            title: "PBX",
+            fullurl: "https://en.wikipedia.org/wiki/PBX",
+            coordinates: [{ lat: 1, lon: 2 }],
+            pageprops: { disambiguation: "", wikibase_item: "Q3359594" },
+            extract: "PBX may refer to:\n\nPakubuwono X\nPolymer-bonded explosive"
+          }]
+        }
+      },
+      { parse: { title: "PBX", wikitext: "*[[Private branch exchange]], a telephone exchange that serves a particular business or office\n*[[PhotoBox]], a digital photo printing service" } }
+    ]);
+
+    try {
+      const page = await wiki.getWikipediaPage("PBX", undefined, undefined);
+
+      assert.strictEqual(page.extract, "");
+      assert.deepStrictEqual(page.disambiguation.map((o) => o.title), ["Private branch exchange", "PhotoBox"]);
+
+      assert.strictEqual(calls.length, 2);
+      assert.strictEqual(new URL(calls[0].url).searchParams.get("action"), "query");
+      assert.strictEqual(new URL(calls[1].url).searchParams.get("action"), "parse");
+      assert.strictEqual(new URL(calls[1].url).searchParams.get("page"), "PBX");
+      assert.strictEqual(new URL(calls[1].url).searchParams.get("prop"), "wikitext");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("offers topics for a disambiguation page even when the lookup carried an anchor", async () => {
+    // the page property must win over the scoping hint: an anchor must not turn a
+    // disambiguation list into a note (e.g. a pasted "/wiki/PBX#Foo")
+    const calls = stubFetch([
+      {
+        query: {
+          redirects: [{ from: "PBX", to: "PBX", tofragment: "Foo" }],
+          pages: [{
+            pageid: 334414, ns: 0, title: "PBX",
+            fullurl: "https://en.wikipedia.org/wiki/PBX",
+            coordinates: [{ lat: 1, lon: 2 }],
+            pageprops: { disambiguation: "" },
+            extract: "== Foo ==\nPBX may refer to:"
+          }]
+        }
+      },
+      { parse: { title: "PBX", wikitext: "*[[Private branch exchange]], a telephone exchange" } }
+    ]);
+
+    try {
+      const page = await wiki.getWikipediaPage("", undefined, "https://en.wikipedia.org/wiki/PBX#Foo");
+
+      assert.strictEqual(page.extract, "");
+      assert.deepStrictEqual(page.disambiguation.map((o) => o.title), ["Private branch exchange"]);
+      assert.strictEqual(page.sectionTitle, "");
+      assert.ok(calls.length === 2);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("falls back to the plain extract when a disambiguation page yields no parseable topics", async () => {
+    stubFetch([
+      {
+        query: {
+          pages: [{
+            pageid: 1, ns: 0, title: "Some index", fullurl: "https://en.wikipedia.org/wiki/Some_index",
+            coordinates: [{ lat: 1, lon: 2 }],
+            pageprops: { disambiguation: "" },
+            extract: "Some index may refer to things."
+          }]
+        }
+      },
+      { parse: { title: "Some index", wikitext: "Prose only, no list items." } }
+    ]);
+    try {
+      const page = await wiki.getWikipediaPage("Some index", undefined, undefined);
+      assert.strictEqual(page.extract, "Some index may refer to things.");
+      assert.strictEqual(page.disambiguation, undefined);
     } finally {
       global.fetch = REAL_FETCH;
     }
@@ -156,17 +439,14 @@ describe("getWikipediaPage", () => {
   it("uses the anchor from a pasted URL when no title is given", async () => {
     const calls = stubFetch({
       query: {
-        pages: [{ pageid: 2, ns: 0, title: "Sumer", fullurl: "https://en.wikipedia.org/wiki/Sumer", extract: "Sumer was..." }]
+        pages: [{ pageid: 2, ns: 0, title: "Sumer", fullurl: "https://en.wikipedia.org/wiki/Sumer", extract: "== History ==\nSumer was..." }]
       }
     });
     try {
-      const page = await wiki.getWikipediaPage(
-        "",
-        undefined,
-        "https://en.wikipedia.org/wiki/Sumer#History"
-      );
+      const page = await wiki.getWikipediaPage("", undefined, "https://en.wikipedia.org/wiki/Sumer#History");
       assert.strictEqual(page.requestedTitle, "Sumer");
       assert.strictEqual(page.anchor, "History");
+      assert.strictEqual(page.sectionTitle, "History");
       assert.strictEqual(new URL(calls[0].url).searchParams.get("titles"), "Sumer");
     } finally {
       global.fetch = REAL_FETCH;

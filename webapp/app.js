@@ -895,26 +895,121 @@ async function processVideo({ apiKey, model, videoUrl, panel, signal }) {
   return { markdown, sourceUrl: meta.url || videoUrl, saveResult, title: meta.title };
 }
 
+// A term with no article of its own redirects into a section of a parent article (PBX ->
+// Business telephone system#Private branch exchange). The server has already sliced that
+// section, so the client only has to pick a note title and an anchored source URL.
+function resolveWikipediaSource(term, wikiData) {
+  const articleTitle = wikiData?.title || term;
+  const requestedTitle = wikiData?.requestedTitle || term;
+  const sectionTitle = wikiData?.sectionTitle || "";
+  const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
+
+  if (!sectionTitle) {
+    return {
+      articleTitle,
+      sourceLabel: articleTitle,
+      sourceUrl: articleUrl,
+      extract: wikiData?.extract || ""
+    };
+  }
+
+  // Title is the term as searched for. When a pasted URL named the parent article and the
+  // fragment carried the section, the section title is the only meaningful name available.
+  const noteTitle = requestedTitle && requestedTitle.toLowerCase() !== articleTitle.toLowerCase()
+    ? requestedTitle
+    : sectionTitle;
+
+  return {
+    articleTitle: noteTitle,
+    sourceLabel: `${noteTitle} (section of ${articleTitle})`,
+    sourceUrl: articleUrl.includes("#")
+      ? articleUrl
+      : `${articleUrl}#${encodeURIComponent(sectionTitle.replace(/\s+/g, "_"))}`,
+    extract: wikiData?.extract || ""
+  };
+}
+
+// A queued term that turns out to be a disambiguation page cannot become a note — the
+// "article" is just a list of topics. Detect that before the run starts so the user gets
+// a choice instead of a note built from the bare list.
+async function preflightWikipediaEntries(items) {
+  const runnable = [];
+  const disambiguations = [];
+
+  for (const item of items) {
+    // Drop any payload from an earlier run before this lookup: if this one throws, the catch
+    // below leaves the entry untouched, and the job must re-fetch rather than reuse a stale
+    // page for the same chip.
+    delete item.entry.prefetched;
+    try {
+      const data = await fetchWikipediaPage(item.entry.title, item.entry.url);
+      const options = Array.isArray(data?.disambiguation) ? data.disambiguation : [];
+      if (options.length) {
+        disambiguations.push({ ...item, options });
+        continue;
+      }
+      // Hand the payload to the job so it does not fetch the same page again.
+      item.entry.prefetched = data;
+    } catch {
+      // A lookup failure here is not a disambiguation page — let the job path report it.
+    }
+    runnable.push(item);
+  }
+
+  return { runnable, disambiguations };
+}
+
+// Drop a queued entry that turned out to be a disambiguation page.
+function removeQueuedEntry({ entry, itemType }) {
+  const selected = itemType === "business" ? selectedWikiBusinesses : selectedWikiTerms;
+  const idx = selected.indexOf(entry);
+  if (idx >= 0) selected.splice(idx, 1);
+}
+
+function disambiguationSuggestion(option) {
+  return {
+    title: option.title,
+    description: option.description || "Wikipedia article",
+    url: option.url || ""
+  };
+}
+
+// A pre-flight payload must never outlive the run that fetched it — a later run would
+// silently reuse a stale page for the same chip.
+function clearPrefetchedPayloads(items) {
+  items.forEach(({ entry }) => { delete entry.prefetched; });
+}
+
 async function processWikipediaTerm({ apiKey, model, entry, panel, signal }) {
   const term = entry.title;
-  panel.setProgress("Loading Wikipedia article", 15);
-  const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
-  let wikiData;
-  try {
-    wikiData = await fetchWikipediaPage(term, entry.url, signal);
-  } finally {
-    stopHeartbeat(fetchHb);
+  // The disambiguation pre-flight already fetched this page — reuse it rather than paying
+  // a second request (Wikipedia rate-limits bursts, and the payload is milliseconds old).
+  let wikiData = entry.prefetched || null;
+  delete entry.prefetched;
+  if (!wikiData) {
+    panel.setProgress("Loading Wikipedia article", 15);
+    const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
+    try {
+      wikiData = await fetchWikipediaPage(term, entry.url, signal);
+    } finally {
+      stopHeartbeat(fetchHb);
+    }
   }
   throwIfCancelled(signal);
-  const articleTitle = wikiData?.title || term;
-  const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
-  const extract = wikiData?.extract || "";
+  const source = resolveWikipediaSource(term, wikiData);
+  const articleTitle = source.articleTitle;
+  const articleUrl = source.sourceUrl;
+  const extract = source.extract;
 
   if (!extract.trim()) {
     throw new Error("Wikipedia article content was empty.");
   }
 
-  panel.appendLog(`Fetched Wikipedia article: ${articleTitle}`);
+  panel.appendLog(wikiData?.sectionTitle
+    ? `Fetched section: ${wikiData.sectionTitle} (from ${wikiData.title})`
+    : wikiData?.anchorStale
+      ? `Section "${wikiData.anchor}" no longer exists in ${wikiData.title} — used the full article`
+      : `Fetched Wikipedia article: ${articleTitle}`);
   panel.setProgress("Summarizing article", 65, "Dictionary note format");
 
   const summaryMessages = [
@@ -943,7 +1038,7 @@ Rules:
 - If details are missing from the source, write "Not clearly stated in source." where needed.
 - Neutral factual tone. No speculation.
 
-Article title: ${articleTitle}
+Article title: ${source.sourceLabel}
 
 ARTICLE TEXT:
 ${extract.slice(0, 180000)}`
@@ -1014,24 +1109,33 @@ ${extract.slice(0, 180000)}`
 
 async function processWikipediaBusiness({ apiKey, model, entry, panel, signal }) {
   const term = entry.title;
-  panel.setProgress("Loading Wikipedia article", 15);
-  const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
-  let wikiData;
-  try {
-    wikiData = await fetchWikipediaPage(term, entry.url, signal);
-  } finally {
-    stopHeartbeat(fetchHb);
+  // See processWikipediaTerm: reuse the disambiguation pre-flight's payload when present.
+  let wikiData = entry.prefetched || null;
+  delete entry.prefetched;
+  if (!wikiData) {
+    panel.setProgress("Loading Wikipedia article", 15);
+    const fetchHb = startHeartbeat(panel, "Loading Wikipedia article", 15);
+    try {
+      wikiData = await fetchWikipediaPage(term, entry.url, signal);
+    } finally {
+      stopHeartbeat(fetchHb);
+    }
   }
   throwIfCancelled(signal);
-  const articleTitle = wikiData?.title || term;
-  const articleUrl = wikiData?.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(articleTitle.replace(/\s+/g, "_"))}`;
-  const extract = wikiData?.extract || "";
+  const source = resolveWikipediaSource(term, wikiData);
+  const articleTitle = source.articleTitle;
+  const articleUrl = source.sourceUrl;
+  const extract = source.extract;
 
   if (!extract.trim()) {
     throw new Error("Wikipedia article content was empty.");
   }
 
-  panel.appendLog(`Fetched Wikipedia article: ${articleTitle}`);
+  panel.appendLog(wikiData?.sectionTitle
+    ? `Fetched section: ${wikiData.sectionTitle} (from ${wikiData.title})`
+    : wikiData?.anchorStale
+      ? `Section "${wikiData.anchor}" no longer exists in ${wikiData.title} — used the full article`
+      : `Fetched Wikipedia article: ${articleTitle}`);
   panel.setProgress("Summarizing article", 65, "Business note format");
 
   const summaryMessages = [
@@ -1060,7 +1164,7 @@ Rules:
 - Keep summary to 3-5 paragraphs.
 - Do not add extra headings or commentary.
 
-Article title: ${articleTitle}
+Article title: ${source.sourceLabel}
 
 ARTICLE TEXT:
 ${extract.slice(0, 180000)}`
@@ -1495,10 +1599,47 @@ async function runWikipedia() {
   openSource.href = firstEntry?.url
     || `https://en.wikipedia.org/wiki/${encodeURIComponent(firstLabel.replace(/\s+/g, "_"))}`;
 
-  const workItems = [
+  let workItems = [
     ...terms.map((entry) => ({ entry, itemType: "dictionary" })),
     ...businesses.map((entry) => ({ entry, itemType: "business" }))
   ];
+
+  // Disambiguation pre-flight: a term that is just a list of topics ("PBX" -> Polymer-bonded
+  // explosive, Private branch exchange, PhotoBox …) cannot become a note. Offer its topics as
+  // suggestions instead of writing a note built from the bare list, and run whatever else was
+  // queued. This costs one extra lookup per item.
+  statusEl.textContent = `Checking ${workItems.length} Wikipedia item${workItems.length === 1 ? "" : "s"}…`;
+  const preflight = await preflightWikipediaEntries(workItems);
+  if (preflight.disambiguations.length) {
+    // Remove every disambiguation entry first, then render once per list. Rendering inside
+    // the loop would clear the previous page's topics, leaving only the last one pickable
+    // while the status text promised them all.
+    preflight.disambiguations.forEach(removeQueuedEntry);
+    renderSelectedWikiTerms();
+    renderSelectedWikiBusinesses();
+    for (const itemType of ["dictionary", "business"]) {
+      const options = preflight.disambiguations
+        .filter((item) => item.itemType === itemType)
+        .flatMap((item) => item.options)
+        .map(disambiguationSuggestion);
+      if (options.length) {
+        renderWikiSuggestions(options, itemType === "business" ? "business" : "term");
+      }
+    }
+
+    workItems = preflight.runnable;
+    const names = preflight.disambiguations.map((item) => item.entry.title).join(", ");
+    const isSingle = preflight.disambiguations.length === 1;
+    if (!workItems.length) {
+      // No cleanup needed here: an entry only receives a pre-flight payload when it lands
+      // in `runnable`, and this branch means `runnable` was empty.
+      statusEl.textContent = `${names} ${isSingle ? "is a disambiguation page" : "are disambiguation pages"} — pick a topic below.`;
+      isProcessing = false;
+      updateActionButtons();
+      return;
+    }
+    statusEl.textContent = `Skipped ${names} (disambiguation ${isSingle ? "page" : "pages"}) — pick a topic below. Running ${workItems.length}.`;
+  }
 
   const offset = progressContainer.children.length;
   const panels = workItems.map(({ entry }, index) => {
@@ -1517,6 +1658,9 @@ async function runWikipedia() {
         : processWikipediaTerm({ apiKey, model, entry, panel, signal });
     })
   );
+
+  // Never leave a pre-flight payload on a chip that survives into a later run.
+  clearPrefetchedPayloads(workItems);
 
   isProcessing = false;
   finalizeRunResults(results, panels, "wiki");
