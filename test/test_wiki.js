@@ -1,0 +1,192 @@
+const { describe, it } = require("node:test");
+const assert = require("node:assert");
+
+const wiki = require("../lib/wiki");
+
+// ---- pure helpers ----
+
+describe("wikiLookupFromUrl", () => {
+  it("splits an anchored article URL into title and anchor", () => {
+    const result = wiki.wikiLookupFromUrl(
+      "https://en.wikipedia.org/wiki/Business_telephone_system#Private_branch_exchange"
+    );
+    assert.deepStrictEqual(result, {
+      title: "Business telephone system",
+      anchor: "Private branch exchange"
+    });
+  });
+
+  it("decodes percent-encoded titles and anchors", () => {
+    const result = wiki.wikiLookupFromUrl(
+      "https://en.wikipedia.org/wiki/Gal%C3%A1pagos_syndrome#Population_decline"
+    );
+    assert.strictEqual(result.title, "Galápagos syndrome");
+    assert.strictEqual(result.anchor, "Population decline");
+  });
+
+  it("returns an empty anchor for a plain article URL", () => {
+    const result = wiki.wikiLookupFromUrl("https://en.wikipedia.org/wiki/Sumer");
+    assert.deepStrictEqual(result, { title: "Sumer", anchor: "" });
+  });
+
+  it("rejects a non-Wikipedia host", () => {
+    assert.throws(
+      () => wiki.wikiLookupFromUrl("https://evil.example.com/wiki/Sumer"),
+      /host must be a wikipedia\.org subdomain/
+    );
+  });
+
+  it("rejects a non-article wikipedia path", () => {
+    assert.throws(
+      () => wiki.wikiLookupFromUrl("https://en.wikipedia.org/w/index.php?title=Sumer"),
+      /must be an \/wiki\/<article> path/
+    );
+  });
+});
+
+describe("wikiArticleUrl", () => {
+  it("underscores spaces and percent-encodes", () => {
+    assert.strictEqual(
+      wiki.wikiArticleUrl("Business telephone system"),
+      "https://en.wikipedia.org/wiki/Business_telephone_system"
+    );
+  });
+});
+
+// ---- getWikipediaPage against a stubbed API ----
+
+const REAL_FETCH = global.fetch;
+
+function stubFetch(payload, { status = 200 } = {}) {
+  const calls = [];
+  global.fetch = async (url) => {
+    calls.push(String(url));
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      statusText: "OK",
+      text: async () => JSON.stringify(payload)
+    };
+  };
+  return calls;
+}
+
+describe("getWikipediaPage", () => {
+  it("resolves a section redirect to its parent article and reports the anchor", async () => {
+    const calls = stubFetch({
+      query: {
+        redirects: [
+          { from: "Private branch exchange", to: "Business telephone system", tofragment: "Private branch exchange" }
+        ],
+        pages: [
+          {
+            pageid: 1017561,
+            ns: 0,
+            title: "Business telephone system",
+            fullurl: "https://en.wikipedia.org/wiki/Business_telephone_system",
+            coordinates: [{ lat: 1, lon: 2 }],
+            extract: "== Private branch exchange ==\nA Private Branch Exchange (PBX) system..."
+          }
+        ]
+      }
+    });
+
+    try {
+      const page = await wiki.getWikipediaPage("Private branch exchange", undefined, undefined);
+
+      assert.strictEqual(page.title, "Business telephone system");
+      assert.strictEqual(page.anchor, "Private branch exchange");
+      assert.strictEqual(page.requestedTitle, "Private branch exchange");
+      assert.strictEqual(page.url, "https://en.wikipedia.org/wiki/Business_telephone_system");
+      assert.deepStrictEqual(page.location, { lat: 1, lon: 2 });
+      assert.match(page.extract, /Private Branch Exchange/);
+
+      // exactly one request: the article body is not fetched twice, and the inline
+      // coordinates mean no follow-up coordinate lookup
+      assert.strictEqual(calls.length, 1);
+      const sent = new URL(calls[0]);
+      assert.strictEqual(sent.searchParams.get("action"), "query");
+      assert.strictEqual(sent.searchParams.get("redirects"), "1");
+      assert.strictEqual(sent.searchParams.get("explaintext"), "1");
+      assert.strictEqual(sent.searchParams.get("exsectionformat"), "wiki");
+      assert.match(sent.searchParams.get("prop"), /extracts/);
+      assert.strictEqual(sent.searchParams.get("titles"), "Private branch exchange");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("reports no anchor for a redirect that targets a whole article", async () => {
+    stubFetch({
+      query: {
+        redirects: [{ from: "Sumerians", to: "Sumer" }],
+        pages: [{ pageid: 1, ns: 0, title: "Sumer", fullurl: "https://en.wikipedia.org/wiki/Sumer", extract: "Sumer was..." }]
+      }
+    });
+    try {
+      const page = await wiki.getWikipediaPage("Sumerians", undefined, undefined);
+      assert.strictEqual(page.title, "Sumer");
+      assert.strictEqual(page.anchor, "");
+      assert.strictEqual(page.requestedTitle, "Sumerians");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("uses the anchor from a pasted URL when no title is given", async () => {
+    const calls = stubFetch({
+      query: {
+        pages: [{ pageid: 2, ns: 0, title: "Sumer", fullurl: "https://en.wikipedia.org/wiki/Sumer", extract: "Sumer was..." }]
+      }
+    });
+    try {
+      const page = await wiki.getWikipediaPage(
+        "",
+        undefined,
+        "https://en.wikipedia.org/wiki/Sumer#History"
+      );
+      assert.strictEqual(page.requestedTitle, "Sumer");
+      assert.strictEqual(page.anchor, "History");
+      assert.strictEqual(new URL(calls[0]).searchParams.get("titles"), "Sumer");
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("throws a clear error for a missing article", async () => {
+    stubFetch({ query: { pages: [{ ns: 0, title: "Zzzz nope", missing: true }] } });
+    try {
+      await assert.rejects(
+        () => wiki.getWikipediaPage("Zzzz nope", undefined, undefined),
+        /no article titled "Zzzz nope"/
+      );
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("surfaces an API-level error", async () => {
+    stubFetch({ error: { code: "badvalue", info: "Unrecognized value for parameter" } });
+    try {
+      await assert.rejects(
+        () => wiki.getWikipediaPage("Sumer", undefined, undefined),
+        /Wikipedia API error: Unrecognized value for parameter/
+      );
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+
+  it("rejects an invalid provided URL before calling the API", async () => {
+    const calls = stubFetch({ query: { pages: [] } });
+    try {
+      await assert.rejects(
+        () => wiki.getWikipediaPage("", undefined, "https://evil.example.com/wiki/Sumer"),
+        /host must be a wikipedia\.org subdomain/
+      );
+      assert.strictEqual(calls.length, 0);
+    } finally {
+      global.fetch = REAL_FETCH;
+    }
+  });
+});
