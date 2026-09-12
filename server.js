@@ -212,9 +212,11 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // One synchronous MediaWiki API call (no Bright Data snapshot to trigger and poll), so
+    // the budget is a single HTTP round trip — configurable, since TextExtracts is slow on
+    // very long articles.
     const ctrl = new AbortController();
-    const retryBudget = SNAPSHOT_MAX_RETRIES * (SNAPSHOT_RETRY_INTERVAL_MS + SNAPSHOT_RETRY_GRACE_MS);
-    const timer = setTimeout(() => ctrl.abort(), cfg.getConfig().BRIGHT_DATA_TIMEOUT_MS + retryBudget + 5000);
+    const timer = setTimeout(() => ctrl.abort(), cfg.getConfig().WIKI_API_TIMEOUT_MS);
     try {
       const page = await wiki.getWikipediaPage(title, ctrl.signal, articleUrlParam);
       sendJson(res, 200, page);

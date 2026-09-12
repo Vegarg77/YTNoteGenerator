@@ -230,41 +230,6 @@ describe("parseBrightDataTriggerResponse", () => {
   });
 });
 
-describe("extractWikiCoordinates", () => {
-  it("extracts lat/lon from coordinates object", () => {
-    const result = brightdata.extractWikiCoordinates({ coordinates: { lat: 48.8566, lon: 2.3522 } });
-    assert.deepStrictEqual(result, { lat: 48.8566, lon: 2.3522 });
-  });
-
-  it("extracts from location field", () => {
-    const result = brightdata.extractWikiCoordinates({ location: { lat: 40.7128, lon: -74.006 } });
-    assert.deepStrictEqual(result, { lat: 40.7128, lon: -74.006 });
-  });
-
-  it("handles latitude/longitude alt names", () => {
-    const result = brightdata.extractWikiCoordinates({ geo: { latitude: 51.5074, longitude: -0.1278 } });
-    assert.deepStrictEqual(result, { lat: 51.5074, lon: -0.1278 });
-  });
-
-  it("handles array format [lat, lon]", () => {
-    const result = brightdata.extractWikiCoordinates({ coords: [35.6895, 139.6917] });
-    assert.deepStrictEqual(result, { lat: 35.6895, lon: 139.6917 });
-  });
-
-  it("handles top-level latitude/longitude", () => {
-    const result = brightdata.extractWikiCoordinates({ latitude: 55.7558, longitude: 37.6173 });
-    assert.deepStrictEqual(result, { lat: 55.7558, lon: 37.6173 });
-  });
-
-  it("returns null for no coordinates", () => {
-    assert.strictEqual(brightdata.extractWikiCoordinates({ title: "No coords" }), null);
-  });
-
-  it("returns null for non-finite values", () => {
-    assert.strictEqual(brightdata.extractWikiCoordinates({ coordinates: { lat: NaN, lon: Infinity } }), null);
-  });
-});
-
 describe("validateBrightDataConfig", () => {
   it("throws when token is missing", () => {
     assert.throws(() => brightdata.validateBrightDataConfig({ BRIGHT_DATA_API_TOKEN: "", BRIGHT_DATA_YT_DATASET_ID: "abc" }), /BRIGHT_DATA_API_TOKEN/);
@@ -279,16 +244,6 @@ describe("validateBrightDataConfig", () => {
   });
 });
 
-describe("validateBrightDataWikiConfig", () => {
-  it("throws when token is missing", () => {
-    assert.throws(() => brightdata.validateBrightDataWikiConfig({ BRIGHT_DATA_API_TOKEN: "", BRIGHT_DATA_WIKI_DATASET_ID: "abc" }), /BRIGHT_DATA_API_TOKEN/);
-  });
-
-  it("throws when wiki dataset ID is missing", () => {
-    assert.throws(() => brightdata.validateBrightDataWikiConfig({ BRIGHT_DATA_API_TOKEN: "tok", BRIGHT_DATA_WIKI_DATASET_ID: "" }), /BRIGHT_DATA_WIKI_DATASET_ID/);
-  });
-});
-
 // ---- lib/config.js ----
 
 const cfg = require("../lib/config");
@@ -297,7 +252,7 @@ describe("getConfig", () => {
   it("returns defaults when env is empty", () => {
     // Save current env, clear relevant keys
     const saved = {};
-    const keys = ["OPENAI_MODEL", "BRIGHT_DATA_WIKI_DATASET_ID", "BRIGHT_DATA_TIMEOUT_MS", "BRIGHT_DATA_POLL_INTERVAL_MS",
+    const keys = ["OPENAI_MODEL", "BRIGHT_DATA_TIMEOUT_MS", "BRIGHT_DATA_POLL_INTERVAL_MS",
                   "BRIGHT_DATA_API_BASE", "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
                   "OPENAI_API_KEY", "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_YT_DATASET_ID"];
     for (const key of keys) {
@@ -307,7 +262,6 @@ describe("getConfig", () => {
     try {
       const c = cfg.getConfig();
       assert.strictEqual(c.OPENAI_MODEL, "deepseek/deepseek-v4-flash-0731");
-      assert.strictEqual(c.BRIGHT_DATA_WIKI_DATASET_ID, "gd_lr9978962kkjr3nx49");
       assert.strictEqual(c.BRIGHT_DATA_TIMEOUT_MS, 120000);
       assert.strictEqual(c.BRIGHT_DATA_POLL_INTERVAL_MS, 2000);
       assert.strictEqual(c.BRIGHT_DATA_API_BASE, "https://api.brightdata.com");

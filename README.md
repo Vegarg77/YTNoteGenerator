@@ -51,10 +51,12 @@ For each video, the app:
 
 - Node.js 18+ (built-in `fetch` is used — no npm dependencies).
 - OpenAI API key (can be set via settings panel or provided at runtime).
-- Bright Data dataset API credentials for YouTube transcripts and Wikipedia lookups:
+- Bright Data dataset API credentials for YouTube transcripts:
   - `BRIGHT_DATA_API_TOKEN`
   - `BRIGHT_DATA_YT_DATASET_ID`
-  - `BRIGHT_DATA_WIKI_DATASET_ID` (defaults to `gd_lr9978962kkjr3nx49`)
+
+Wikipedia article text, suggestions and coordinates are fetched from the official
+MediaWiki API and need no credentials.
 
 Optional Python helper dependency (legacy/utility script):
 
@@ -78,11 +80,12 @@ Set required values:
 OPENAI_API_KEY=your-openai-api-key
 BRIGHT_DATA_API_TOKEN=...
 BRIGHT_DATA_YT_DATASET_ID=...
-BRIGHT_DATA_WIKI_DATASET_ID=gd_lr9978962kkjr3nx49
 ```
 
 Optional overrides supported by the server:
 
+- `WIKI_API_TIMEOUT_MS` (default `20000`) — abort budget for the Wikipedia lookup; raise it
+  if a very long article times out.
 - `OPENAI_MODEL` (default `deepseek/deepseek-v4-flash-0731` — pinned to the July 2026 retrain;
   OpenRouter's bare `deepseek/deepseek-v4-flash` alias resolves to an older April 2026 snapshot)
 - `OPENAI_BASE_URL` (default `https://openrouter.ai/api`) — point at any OpenAI-compatible API.
