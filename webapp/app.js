@@ -615,6 +615,7 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
 
 // memoized per page load — the pool changes slowly, and the server caches its scan too
 let tagPoolPromise = null;
+let tagScanFileCount = 0; // notes the last scan read — reported when the pool is empty
 async function getTagPool() {
   if (!tagPoolPromise) {
     tagPoolPromise = (async () => {
@@ -626,6 +627,7 @@ async function getTagPool() {
         const resp = await fetch("/api/tags", { signal: ctrl.signal });
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
+        tagScanFileCount = data.fileCount ?? 0;
         return (data.tags || []).map((entry) => entry.tag);
       } catch (err) {
         if (err?.name === "AbortError") {
@@ -643,21 +645,39 @@ async function getTagPool() {
   return tagPoolPromise;
 }
 
+// Run-log line for a note's tag outcome. An empty pool is a valid state (untagged vault,
+// or everything excluded), not an error — but it must not read as "none matched", or a
+// wrong Vault Root hides behind a normal-looking result on every note of a batch.
+function describeTagOutcome(noteTags, pool) {
+  if (noteTags.length) return `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}`;
+  if (!pool || pool.length === 0) {
+    return `Tags: none — vault tag pool is empty (scanned ${tagScanFileCount} note(s) under ` +
+      `Vault Root, no tags outside the exclude list). Check Vault Root in Settings.`;
+  }
+  return "Tags: none matched the pool";
+}
+
 // Parse the model's reply and enforce the pool: accept only tags that exist in the
 // pool (case-insensitive, canonical pool casing wins), deduped. Models occasionally
 // invent plausible tags no matter the prompt — the guarantee lives here, not there.
+// A reply with no parseable JSON array throws: that is a failed call, not "no tags apply",
+// and reporting it as the latter hides a broken model/provider behind a normal outcome.
 function validateTagSelection(rawText, pool) {
   const byLower = new Map(pool.map((t) => [t.toLowerCase(), t]));
-  let names = [];
+  let names = null;
+  const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
   try {
-    const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
     const start = jsonText.indexOf("[");
     const end = jsonText.lastIndexOf("]");
     if (start >= 0 && end > start) {
       const parsed = JSON.parse(jsonText.slice(start, end + 1));
       if (Array.isArray(parsed)) names = parsed;
     }
-  } catch { /* fall through to empty */ }
+  } catch { /* reported below */ }
+  if (!names) {
+    const preview = jsonText.replace(/\s+/g, " ").slice(0, 120);
+    throw new Error(`tag reply was not a JSON array: ${preview ? `"${preview}"` : "(empty reply)"}`);
+  }
   const out = [];
   const seen = new Set();
   for (const raw of names) {
@@ -852,7 +872,7 @@ async function processVideo({ apiKey, model, videoUrl, panel, signal }) {
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
@@ -1074,7 +1094,7 @@ ${extract.slice(0, 180000)}`
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
@@ -1199,7 +1219,7 @@ ${extract.slice(0, 180000)}`
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
