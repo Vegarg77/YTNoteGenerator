@@ -50,6 +50,10 @@ test("extractTagsFromMarkdown: Windows line endings, BOM, flush-left and space-s
   const spaced = "---\ntags: one two\n---\nBody";
   assert.deepStrictEqual(extractTagsFromMarkdown(spaced).sort(), ["one", "two"]);
 
+  // a quoted value with a space is one invalid tag — dropped, never split into two
+  const quoted = "---\ntags: [\"my tag\", ok, 'also bad']\n---\nBody";
+  assert.deepStrictEqual(extractTagsFromMarkdown(quoted), ["ok"]);
+
   const atEof = "---\r\ntags:\r\n  - one\r\n---";
   assert.deepStrictEqual(extractTagsFromMarkdown(atEof), ["one"]);
 
