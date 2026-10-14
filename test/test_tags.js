@@ -35,6 +35,25 @@ test("extractTagsFromMarkdown: frontmatter inline array and dash list", () => {
   assert.deepStrictEqual(extractTagsFromMarkdown(dashes).sort(), ["one", "two/three"]);
 });
 
+test("extractTagsFromMarkdown: Windows line endings, BOM, flush-left and space-separated lists", () => {
+  // CRLF dash list (notes synced from Windows) — previously yielded nothing
+  const crlf = "---\r\ntitle: x\r\ntags:\r\n  - one\r\n  - two\r\n---\r\nBody";
+  assert.deepStrictEqual(extractTagsFromMarkdown(crlf).sort(), ["one", "two"]);
+
+  // flush-left dashes are valid YAML and common outside Obsidian's own editor
+  const flush = "---\ntags:\n- one\n- two\ntitle: x\n---\nBody";
+  assert.deepStrictEqual(extractTagsFromMarkdown(flush).sort(), ["one", "two"]);
+
+  const bom = "﻿---\ntags: [one]\n---\nBody";
+  assert.deepStrictEqual(extractTagsFromMarkdown(bom), ["one"]);
+
+  const spaced = "---\ntags: one two\n---\nBody";
+  assert.deepStrictEqual(extractTagsFromMarkdown(spaced).sort(), ["one", "two"]);
+
+  const atEof = "---\r\ntags:\r\n  - one\r\n---";
+  assert.deepStrictEqual(extractTagsFromMarkdown(atEof), ["one"]);
+});
+
 test("extractTagsFromMarkdown: empty/absent input", () => {
   assert.deepStrictEqual(extractTagsFromMarkdown(""), []);
   assert.deepStrictEqual(extractTagsFromMarkdown(null), []);

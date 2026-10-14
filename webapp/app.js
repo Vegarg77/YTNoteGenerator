@@ -626,7 +626,16 @@ async function getTagPool() {
         const resp = await fetch("/api/tags", { signal: ctrl.signal });
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
-        return (data.tags || []).map((entry) => entry.tag);
+        const pool = (data.tags || []).map((entry) => entry.tag);
+        // an empty pool would otherwise read as "none matched" on every single note —
+        // say what was scanned so a wrong Vault Root (or an untagged vault) is obvious
+        if (pool.length === 0) {
+          throw new Error(
+            `vault tag pool is empty — scanned ${data.fileCount ?? 0} note(s) under Vault Root ` +
+            `and found no tags outside the exclude list. Check Vault Root in Settings.`
+          );
+        }
+        return pool;
       } catch (err) {
         if (err?.name === "AbortError") {
           throw new Error("vault tag scan timed out (120s) — check Vault Root in Settings / vault size");
@@ -646,18 +655,24 @@ async function getTagPool() {
 // Parse the model's reply and enforce the pool: accept only tags that exist in the
 // pool (case-insensitive, canonical pool casing wins), deduped. Models occasionally
 // invent plausible tags no matter the prompt — the guarantee lives here, not there.
+// A reply with no parseable JSON array throws: that is a failed call, not "no tags apply",
+// and reporting it as the latter hides a broken model/provider behind a normal outcome.
 function validateTagSelection(rawText, pool) {
   const byLower = new Map(pool.map((t) => [t.toLowerCase(), t]));
-  let names = [];
+  let names = null;
+  const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
   try {
-    const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
     const start = jsonText.indexOf("[");
     const end = jsonText.lastIndexOf("]");
     if (start >= 0 && end > start) {
       const parsed = JSON.parse(jsonText.slice(start, end + 1));
       if (Array.isArray(parsed)) names = parsed;
     }
-  } catch { /* fall through to empty */ }
+  } catch { /* reported below */ }
+  if (!names) {
+    const preview = jsonText.replace(/\s+/g, " ").slice(0, 120);
+    throw new Error(`tag reply was not a JSON array: ${preview ? `"${preview}"` : "(empty reply)"}`);
+  }
   const out = [];
   const seen = new Set();
   for (const raw of names) {
