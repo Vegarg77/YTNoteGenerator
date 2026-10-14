@@ -52,6 +52,10 @@ test("extractTagsFromMarkdown: Windows line endings, BOM, flush-left and space-s
 
   const atEof = "---\r\ntags:\r\n  - one\r\n---";
   assert.deepStrictEqual(extractTagsFromMarkdown(atEof), ["one"]);
+
+  // empty frontmatter closes immediately; the body after it is still scanned
+  assert.deepStrictEqual(extractTagsFromMarkdown("---\n---\nBody #one"), ["one"]);
+  assert.deepStrictEqual(extractTagsFromMarkdown("---\n---"), []);
 });
 
 test("extractTagsFromMarkdown: empty/absent input", () => {
