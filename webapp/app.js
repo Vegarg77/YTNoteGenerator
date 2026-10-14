@@ -615,6 +615,7 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
 
 // memoized per page load — the pool changes slowly, and the server caches its scan too
 let tagPoolPromise = null;
+let tagScanFileCount = 0; // notes the last scan read — reported when the pool is empty
 async function getTagPool() {
   if (!tagPoolPromise) {
     tagPoolPromise = (async () => {
@@ -626,16 +627,8 @@ async function getTagPool() {
         const resp = await fetch("/api/tags", { signal: ctrl.signal });
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
-        const pool = (data.tags || []).map((entry) => entry.tag);
-        // an empty pool would otherwise read as "none matched" on every single note —
-        // say what was scanned so a wrong Vault Root (or an untagged vault) is obvious
-        if (pool.length === 0) {
-          throw new Error(
-            `vault tag pool is empty — scanned ${data.fileCount ?? 0} note(s) under Vault Root ` +
-            `and found no tags outside the exclude list. Check Vault Root in Settings.`
-          );
-        }
-        return pool;
+        tagScanFileCount = data.fileCount ?? 0;
+        return (data.tags || []).map((entry) => entry.tag);
       } catch (err) {
         if (err?.name === "AbortError") {
           throw new Error("vault tag scan timed out (120s) — check Vault Root in Settings / vault size");
@@ -650,6 +643,18 @@ async function getTagPool() {
     });
   }
   return tagPoolPromise;
+}
+
+// Run-log line for a note's tag outcome. An empty pool is a valid state (untagged vault,
+// or everything excluded), not an error — but it must not read as "none matched", or a
+// wrong Vault Root hides behind a normal-looking result on every note of a batch.
+function describeTagOutcome(noteTags, pool) {
+  if (noteTags.length) return `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}`;
+  if (!pool || pool.length === 0) {
+    return `Tags: none — vault tag pool is empty (scanned ${tagScanFileCount} note(s) under ` +
+      `Vault Root, no tags outside the exclude list). Check Vault Root in Settings.`;
+  }
+  return "Tags: none matched the pool";
 }
 
 // Parse the model's reply and enforce the pool: accept only tags that exist in the
@@ -867,7 +872,7 @@ async function processVideo({ apiKey, model, videoUrl, panel, signal }) {
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
@@ -1089,7 +1094,7 @@ ${extract.slice(0, 180000)}`
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
@@ -1214,7 +1219,7 @@ ${extract.slice(0, 180000)}`
       "LLM (tags)",
       signal
     );
-    panel.appendLog(noteTags.length ? `Tags: ${noteTags.map((t) => `#${t}`).join(" ")}` : "Tags: none matched the pool");
+    panel.appendLog(describeTagOutcome(noteTags, pool));
   } catch (tagErr) {
     if (tagErr?.name === "CancelledError") throw tagErr;
     panel.appendLog(`Tagging skipped: ${tagErr?.message || "unknown error"}`);
