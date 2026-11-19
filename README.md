@@ -172,6 +172,27 @@ Open `http://localhost:5173/`. The server listens on `0.0.0.0`, so it is accessi
 
 ### Docker
 
+The image is published as `ghcr.io/vegarg77/ytnote-generator:latest` on every push to
+`main`. It runs as the non-root `node` user (uid/gid 1000), so the note and settings
+directories you mount must be writable by uid 1000 (or pass `--user`).
+
+#### Docker Compose (whole vault)
+
+`docker-compose.yml` mounts the whole Obsidian vault at `/vault`, so the tag pool sees every
+note and notes can go to any vault folder:
+
+```bash
+mkdir -p config && cp .env.example config/.env   # then edit config/.env
+YTNG_VAULT_DIR=/path/to/vault docker compose up -d
+```
+
+In `config/.env` set `OBSIDIAN_VAULT_DIR=/vault` and point `OBSIDIAN_NOTE_DIR`,
+`OBSIDIAN_DICTIONARY_DIR` and `OBSIDIAN_BUSINESS_DIR` at folders under `/vault`. Create
+`config/` before the first start: a bind-mount directory Docker creates itself is owned by
+root, and the app can't save settings into it.
+
+#### docker run (separate note folders)
+
 Build the image:
 
 ```bash

@@ -1,0 +1,42 @@
+# YTNoteGenerator with Docker Compose.
+#
+# Mounts the whole Obsidian vault at /vault, so notes can be saved into any vault folder
+# and the tag pool (OBSIDIAN_VAULT_DIR) sees every note. In $YTNG_SETTINGS_DIR/.env set:
+#   OBSIDIAN_VAULT_DIR=/vault
+#   OBSIDIAN_NOTE_DIR=/vault/<video notes folder>
+#   OBSIDIAN_DICTIONARY_DIR=/vault/<dictionary folder>
+#   OBSIDIAN_BUSINESS_DIR=/vault/<business folder>
+# (or set them in the in-app settings panel).
+#
+# Usage:
+#   YTNG_VAULT_DIR=/path/to/vault docker compose up -d
+# or put YTNG_VAULT_DIR (and optionally YTNG_SETTINGS_DIR, YTNG_UID, YTNG_GID) in a
+# compose-level env file. The settings dir defaults to ./config. Create it yourself
+# before the first start (mkdir -p config && cp .env.example config/.env): a bind-mount
+# source Docker has to create is owned by root, and the container user can't write to it.
+# Without a .env the app starts on built-in defaults and the first panel save creates it.
+#
+# Mount the settings DIRECTORY, never the single .env file: settings are saved via
+# tmp+rename, which fails (EBUSY) over a single-file bind mount. Keep settings out of
+# `environment:` too: launch-environment values override the settings file, so they
+# would silently undo panel edits. YTNG_ENV_FILE is the exception: it only locates the file.
+#
+# The container runs as uid:gid 1000:1000 by default; the vault and settings directories
+# must be writable by that user (override with YTNG_UID / YTNG_GID).
+
+services:
+  ytnotegenerator:
+    # Published image only. For a local build, use `docker build -t ytnotegenerator .`
+    # and change this line, rather than tagging a local build as the registry image.
+    image: ghcr.io/vegarg77/ytnote-generator:latest
+    container_name: ytnotegenerator
+    restart: unless-stopped
+    user: "${YTNG_UID:-1000}:${YTNG_GID:-1000}"
+    ports:
+      - "5173:5173"
+    environment:
+      YTNG_ENV_FILE: /app/config/.env
+    volumes:
+      - "${YTNG_VAULT_DIR:?Set YTNG_VAULT_DIR to the Obsidian vault directory}:/vault"
+      - "${YTNG_SETTINGS_DIR:-./config}:/app/config"
+      - /etc/localtime:/etc/localtime:ro
