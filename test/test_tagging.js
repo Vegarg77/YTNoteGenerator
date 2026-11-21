@@ -167,6 +167,11 @@ test("readTagDefinitions: explicit file, scan-root fallback, missing file", asyn
     fs.writeFileSync(custom, "- AI: machines\n");
     assert.deepStrictEqual((await tagsLib.readTagDefinitions(custom, dir)).definitions, [{ tag: "AI", definition: "machines" }]);
 
+    const passwdLike = path.join(dir, "passwd");
+    fs.writeFileSync(passwdLike, "root: x:0:0:root:/root:/bin/sh\n");
+    assert.deepStrictEqual(await tagsLib.readTagDefinitions(passwdLike, dir),
+      { file: passwdLike, definitions: [], error: "not a Markdown (.md) file" });
+
     const missing = await tagsLib.readTagDefinitions(path.join(dir, "nope.md"), dir);
     assert.deepStrictEqual(missing, { file: path.join(dir, "nope.md"), definitions: [], error: "file not found" });
   } finally {
