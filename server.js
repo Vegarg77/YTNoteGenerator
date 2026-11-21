@@ -237,7 +237,13 @@ const server = http.createServer(async (req, res) => {
       const appCfg = cfg.getConfig();
       const refresh = url.searchParams.get("refresh") === "1";
       const pool = await tags.getTagPool(appCfg.OBSIDIAN_VAULT_DIR, appCfg.TAG_EXCLUDE, { refresh });
-      sendJson(res, 200, pool);
+      const defs = await tags.readTagDefinitions(appCfg.TAG_DEFINITIONS_FILE, appCfg.OBSIDIAN_VAULT_DIR);
+      sendJson(res, 200, {
+        ...pool,
+        definitions: defs.definitions,
+        definitionsFile: defs.file,
+        ...(defs.error ? { definitionsError: defs.error } : {}),
+      });
     } catch (err) {
       sendText(res, 500, `Tag scan failed: ${err.message}`);
     }
@@ -255,6 +261,7 @@ const server = http.createServer(async (req, res) => {
         OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
         OBSIDIAN_VAULT_DIR: appCfg.OBSIDIAN_VAULT_DIR,
         TAG_EXCLUDE: appCfg.TAG_EXCLUDE,
+        TAG_DEFINITIONS_FILE: appCfg.TAG_DEFINITIONS_FILE,
         OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
         OPENAI_MODEL: appCfg.OPENAI_MODEL,
         OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,
@@ -269,7 +276,7 @@ const server = http.createServer(async (req, res) => {
         const payload = await readJsonBody(req);
         const allowedKeys = [
           "OBSIDIAN_NOTE_DIR", "OBSIDIAN_DICTIONARY_DIR", "OBSIDIAN_BUSINESS_DIR",
-          "OBSIDIAN_VAULT_DIR", "TAG_EXCLUDE",
+          "OBSIDIAN_VAULT_DIR", "TAG_EXCLUDE", "TAG_DEFINITIONS_FILE",
           "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL",
           "BRIGHT_DATA_API_TOKEN", "BRIGHT_DATA_TIMEOUT_MS"
         ];
@@ -298,6 +305,7 @@ const server = http.createServer(async (req, res) => {
           OBSIDIAN_BUSINESS_DIR: appCfg.OBSIDIAN_BUSINESS_DIR,
           OBSIDIAN_VAULT_DIR: appCfg.OBSIDIAN_VAULT_DIR,
           TAG_EXCLUDE: appCfg.TAG_EXCLUDE,
+          TAG_DEFINITIONS_FILE: appCfg.TAG_DEFINITIONS_FILE,
           OPENAI_API_KEY: appCfg.OPENAI_API_KEY,
           OPENAI_MODEL: appCfg.OPENAI_MODEL,
           OPENAI_BASE_URL: appCfg.OPENAI_BASE_URL,

@@ -42,11 +42,11 @@ function buildVideoNoteMarkdown({ date, time, channel, publishedDate, summary, f
     "",
     "## Summary:",
     "",
-    summary || "",
+    escapeInlineTags(summary || ""),
     "",
     "## Transcript:",
     "",
-    fixedTranscript || "",
+    escapeInlineTags(fixedTranscript || ""),
     "",
     "### Video Link:",
     "",
@@ -66,7 +66,8 @@ function formatTagLine(tags) {
 }
 
 function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location, tags }) {
-  const body = (structuredContent || "").trim();
+  // generated text never carries live #tags — only the footer tag line does
+  const body = escapeInlineTags((structuredContent || "").trim());
   const frontmatterLines = ["---", "aliases: []"];
   if (location) {
     frontmatterLines.push(`location: ${location.lat}, ${location.lon}`);
@@ -91,25 +92,26 @@ function buildDictionaryMarkdown({ date, structuredContent, sourceUrl, location,
 }
 
 function buildBusinessMarkdown({ date, time, title, foundedBy, foundedOn, headquarters, summary, offerings, sourceUrl, location, tags }) {
+  const esc = escapeInlineTags; // generated text never carries live #tags
   const cleanOfferings = Array.isArray(offerings) ? offerings.filter(Boolean) : [];
-  const offeringsLines = cleanOfferings.length ? cleanOfferings.map((item) => `- ${item}`) : ["- N/A"];
+  const offeringsLines = cleanOfferings.length ? cleanOfferings.map((item) => `- ${esc(item)}`) : ["- N/A"];
 
-  const lines = [];
-  if (location) {
-    lines.push("---", `location: ${location.lat}, ${location.lon}`, "---", "");
-  }
+  // frontmatter always present, aliases first — same shape as dictionary notes
+  const lines = ["---", "aliases: []"];
+  if (location) lines.push(`location: ${location.lat}, ${location.lon}`);
+  lines.push("---", "");
   lines.push(`#### ${date}  ${time}`);
   lines.push(
     "",
-    `## Founded by: ${foundedBy || "N/A"}`,
+    `## Founded by: ${esc(foundedBy || "N/A")}`,
     "",
-    `## Founded on: ${foundedOn || "N/A"}`,
+    `## Founded on: ${esc(foundedOn || "N/A")}`,
     "",
-    `## Headquarters: ${headquarters || "N/A"}`,
+    `## Headquarters: ${esc(headquarters || "N/A")}`,
     "",
     "## Summary:",
     "",
-    summary || "N/A",
+    esc(summary || "N/A"),
     "",
     "## Offerings, Assets, Services",
     "",
@@ -616,6 +618,7 @@ async function openaiText({ apiKey, model, messages, temperature, signal }) {
 // memoized per page load — the pool changes slowly, and the server caches its scan too
 let tagPoolPromise = null;
 let tagScanFileCount = 0; // notes the last scan read — reported when the pool is empty
+let tagDefinitions = []; // [{tag, definition}] from the Tag Definitions note (fetched with the pool)
 async function getTagPool() {
   if (!tagPoolPromise) {
     tagPoolPromise = (async () => {
@@ -628,6 +631,8 @@ async function getTagPool() {
         if (!resp.ok) throw new Error(await resp.text());
         const data = await resp.json();
         tagScanFileCount = data.fileCount ?? 0;
+        tagDefinitions = Array.isArray(data.definitions) ? data.definitions : [];
+        if (data.definitionsError) console.warn(`[tags] Tag Definitions note ${data.definitionsFile}: ${data.definitionsError}`);
         return (data.tags || []).map((entry) => entry.tag);
       } catch (err) {
         if (err?.name === "AbortError") {
@@ -657,53 +662,28 @@ function describeTagOutcome(noteTags, pool) {
   return "Tags: none matched the pool";
 }
 
-// Parse the model's reply and enforce the pool: accept only tags that exist in the
-// pool (case-insensitive, canonical pool casing wins), deduped. Models occasionally
-// invent plausible tags no matter the prompt — the guarantee lives here, not there.
-// A reply with no parseable JSON array throws: that is a failed call, not "no tags apply",
-// and reporting it as the latter hides a broken model/provider behind a normal outcome.
-function validateTagSelection(rawText, pool) {
-  const byLower = new Map(pool.map((t) => [t.toLowerCase(), t]));
-  let names = null;
-  const jsonText = String(rawText || "").replace(/```(?:json)?/gi, "").trim();
-  try {
-    const start = jsonText.indexOf("[");
-    const end = jsonText.lastIndexOf("]");
-    if (start >= 0 && end > start) {
-      const parsed = JSON.parse(jsonText.slice(start, end + 1));
-      if (Array.isArray(parsed)) names = parsed;
-    }
-  } catch { /* reported below */ }
-  if (!names) {
-    const preview = jsonText.replace(/\s+/g, " ").slice(0, 120);
-    throw new Error(`tag reply was not a JSON array: ${preview ? `"${preview}"` : "(empty reply)"}`);
-  }
-  const out = [];
-  const seen = new Set();
-  for (const raw of names) {
-    const canonical = byLower.get(String(raw).trim().replace(/^#/, "").toLowerCase());
-    if (canonical && !seen.has(canonical)) {
-      seen.add(canonical);
-      out.push(canonical);
-    }
-  }
-  return out;
-}
+// Reply parsing, pool enforcement, the per-note cap and the inline-'#' escape live in
+// webapp/tagging.js (loaded first, shared with the Node tests).
+const { MAX_NOTE_TAGS, validateTagSelection, formatTagDefinitions, escapeInlineTags } = window.YTNGTagging;
 
 // Note-kind labels for the tag picker. Video keeps its original wording; the Wikipedia
 // flows describe the note without a channel. Dictionary/business notes carry no
-// mandatory #VN prefix — tags come purely from the pool.
+// mandatory #VN prefix — tags come purely from the pool. `limit` = pool tags the note
+// may get: the cap counts #VN, so video notes get one fewer.
 const TAG_KIND_PROMPTS = {
   video: {
     label: "video note",
+    limit: MAX_NOTE_TAGS - 1,
     header: (title, channel) => `Video Title: ${title || ""}\nChannel: ${channel || ""}`
   },
   dictionary: {
     label: "dictionary note (a Wikipedia term)",
+    limit: MAX_NOTE_TAGS,
     header: (title) => `Term: ${title || ""}`
   },
   business: {
     label: "business note (a Wikipedia organization)",
+    limit: MAX_NOTE_TAGS,
     header: (title) => `Organization: ${title || ""}`
   }
 };
@@ -713,21 +693,24 @@ const TAG_KIND_PROMPTS = {
 async function selectNoteTags({ apiKey, model, title, channel, summary, pool, signal, kind = "video" }) {
   if (!pool || pool.length === 0) return [];
   const prompt = TAG_KIND_PROMPTS[kind] || TAG_KIND_PROMPTS.video;
+  const definitions = formatTagDefinitions(tagDefinitions, pool);
   const messages = [
-    { role: "system", content: "You label notes with tags chosen STRICTLY from a fixed list. Never invent tags." },
+    { role: "system", content: "You label notes with tags chosen STRICTLY from a fixed list. Never invent tags. Fewer, accurate tags beat many loose ones." },
     {
       role: "user",
       content:
         `Here is the complete list of allowed tags:\n${pool.join(", ")}\n\n` +
-        `Select every tag from that list that genuinely applies to the ${prompt.label} below. ` +
-        `Only include a tag if the note's content is substantially about that topic. ` +
+        (definitions ? `${definitions}\n\n` : "") +
+        `Select the tags from that list that describe what the ${prompt.label} below is mainly about — ` +
+        `its main subjects, not things it only mentions in passing. ` +
+        `Return at most ${prompt.limit} tags, most relevant first; fewer is fine. ` +
         `If none apply, return an empty array. ` +
         `Respond with ONLY a JSON array of tag names (no # prefix), nothing else.\n\n` +
         `${prompt.header(title, channel)}\n\nSUMMARY:\n${(summary || "").slice(0, 12000)}`
     }
   ];
   const reply = await openaiText({ apiKey, model, messages, temperature: 0, signal });
-  return validateTagSelection(reply, pool);
+  return validateTagSelection(reply, pool, { limit: prompt.limit });
 }
 
 function startHeartbeat(panel, label = "Working…", floorPct = 69) {
@@ -1453,6 +1436,7 @@ function populateSettingsForm(data) {
   el("settingBizPath").value = data.OBSIDIAN_BUSINESS_DIR || "";
   el("settingVaultPath").value = data.OBSIDIAN_VAULT_DIR || "";
   el("settingTagExclude").value = data.TAG_EXCLUDE || "VN";
+  el("settingTagDefs").value = data.TAG_DEFINITIONS_FILE || "";
   el("settingOpenaiKey").value = data.OPENAI_API_KEY || "";
   el("settingBrightKey").value = data.BRIGHT_DATA_API_TOKEN || "";
   el("settingModel").value = data.OPENAI_MODEL || "deepseek/deepseek-v4-flash-0731";
@@ -1472,6 +1456,7 @@ async function saveSettings() {
     OBSIDIAN_BUSINESS_DIR: el("settingBizPath").value.trim(),
     OBSIDIAN_VAULT_DIR: el("settingVaultPath").value.trim(),
     TAG_EXCLUDE: el("settingTagExclude").value.trim() || "VN",
+    TAG_DEFINITIONS_FILE: el("settingTagDefs").value.trim(),
     OPENAI_API_KEY: el("settingOpenaiKey").value.trim(),
     BRIGHT_DATA_API_TOKEN: el("settingBrightKey").value.trim(),
     OPENAI_MODEL: el("settingModel").value.trim() || "deepseek/deepseek-v4-flash-0731",

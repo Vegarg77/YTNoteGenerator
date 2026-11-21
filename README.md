@@ -19,6 +19,17 @@ For each video, the app:
   Obsidian vault; settings exclude-list filters workflow tags). Selection is LLM-picked
   from the summary but validated in code against the pool — invented tags are dropped,
   zero matches is valid.
+- At most 10 tags per note, `#VN` included: the model ranks them most relevant first and the
+  rest are dropped. A reply that lists a large share of the whole pool (the list echoed back)
+  is treated as a failed call and the note is saved without topic tags.
+- Tag definitions: a vault note (default `Tag Definitions.md` at the vault root, `/vault` in
+  Docker; see Settings) with one `Tag: what it means` per line, e.g.
+  `Entertainment: video games, plays, musicals, leisure media`. Definitions of tags in the
+  pool are sent to the tagger, so a defined tag is applied only when its meaning fits. Edits
+  apply on the next page load; a missing note just means no definitions.
+- Generated text never creates tags: a `#word` in a summary, transcript or Wikipedia text is
+  written as `#word` (looks the same in Obsidian, is not a tag). Headings, the footer tag
+  line, `C#`, URL fragments, code and HTML such as highlight colours are left alone.
 - Builds a Markdown note in this format:
   - Note creation date/time
   - Channel
@@ -32,6 +43,7 @@ For each video, the app:
 
 - **Dictionary notes**: Search Wikipedia terms with autocomplete, then generate Obsidian dictionary entries with YAML frontmatter.
 - **Business notes**: Extract business/organization info (founders, headquarters, offerings) from Wikipedia into structured notes.
+- Both note types carry `aliases: []` frontmatter.
 - Both note types are tagged like video notes: the app LLM-selects topic tags from your
   existing vault tag pool (scanned server-side; the settings exclude list is respected).
   Unlike video notes there is no mandatory `#VN` tag — a note gets tags only when pool

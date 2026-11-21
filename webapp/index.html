@@ -127,6 +127,9 @@
             <label for="settingTagExclude">Excluded Tags</label>
             <input id="settingTagExclude" type="text" value="VN" placeholder="VN, todo, daily" />
             <small>Comma/space separated; never offered to the tagger (with or without <code>#</code>).</small>
+            <label for="settingTagDefs">Tag Definitions Note</label>
+            <input id="settingTagDefs" type="text" placeholder="/vault/Tag Definitions.md" />
+            <small>A note with one <code>Tag: what it means</code> per line, sent to the tagger. Blank = <code>Tag Definitions.md</code> at the vault root (<code>/vault</code> in Docker), else in Vault Root. Edits apply on the next run.</small>
           </fieldset>
 
           <fieldset class="settings-group">
@@ -161,6 +164,7 @@
       </div>
     </div>
 
+    <script src="/webapp/tagging.js"></script>
     <script src="/webapp/app.js"></script>
   </body>
 </html>
